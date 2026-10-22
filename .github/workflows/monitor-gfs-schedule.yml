@@ -1,5 +1,4 @@
-# Intentionally disabled until the combined manual collect-to-publish E2E passes.
-name: Monitor GFS Schedule Freshness (DISABLED TEMPLATE)
+name: Monitor GFS Schedule Freshness
 
 on:
   workflow_dispatch:
@@ -43,3 +42,4 @@ jobs:
             if (attemptAgeHours > 8) core.setFailed("GFS_SCHEDULE_ATTEMPT_MISSING");
             else if (successAgeHours > 14) core.setFailed("GFS_LAST_SUCCESS_STALE");
             else if (consecutiveFailures >= 2) core.setFailed("GFS_CONSECUTIVE_FAILURES");
+

@@ -37,8 +37,8 @@ publishers additionally share `guis-weather-gfs-r2-publisher`, preventing concur
 
 ## Schedule gate
 
-The combined workflow must pass one manual `workflow_dispatch` run before the
-schedule is added. The approved UTC schedule is:
+The combined workflow passed a new-run manual `workflow_dispatch` E2E before the
+schedule was activated. The active UTC schedule is:
 
 - 05:37 for the 00 UTC model run;
 - 11:37 for the 06 UTC model run;
@@ -91,7 +91,8 @@ These states do not alter, interpolate or replace forecast values.
   `GFS_BYTE_BUDGET_EXCEEDED`;
 - malformed GRIB2: `GFS_GRIB_ENVELOPE_INVALID` or decoder error;
 - incomplete forecast coverage: decoder/coverage validation error;
-- duplicate model run: `GFS_RUN_ALREADY_COLLECTED`;
+- no newer complete model run: successful `NO_NEW_COMPLETE_RUN` no-op;
+- reusable trusted Artifact awaiting R2: `ARTIFACT_EXISTS_UNPUBLISHED`;
 - artifact/provenance error: `GFS_ARTIFACT_*`;
 - R2 authentication/upload/integrity error: `R2_*`;
 - index integrity error: index manifest/source hash failure;

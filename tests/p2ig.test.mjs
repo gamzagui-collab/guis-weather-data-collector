@@ -94,11 +94,11 @@ test("manual workflow enforces f001-f048, 55 requests, 15 MiB and remains unsche
   assert.doesNotMatch(workflow, /R2_|secrets\./);
 });
 
-test("disabled schedule template contains four candidate UTC runs but cannot activate", async () => {
-  const template = await readFile(join(here, "../.github/workflows/collect-gfs.schedule.yml.disabled"), "utf8");
-  assert.match(template, /37 5,11,17,23 \* \* \*/);
-  assert.match(template, /Intentionally disabled/);
-  assert.match(template, /cancel-in-progress: false/);
+test("verified combined workflow contains four active UTC schedule runs", async () => {
+  const workflow = await readFile(join(here, "../.github/workflows/collect-gfs-automatic.yml"), "utf8");
+  assert.match(workflow, /37 5,11,17,23 \* \* \*/);
+  assert.match(workflow, /schedule:/);
+  assert.match(workflow, /cancel-in-progress: false/);
 });
 
 test("collector uses fatal coverage validation and sanitized collection evidence", async () => {

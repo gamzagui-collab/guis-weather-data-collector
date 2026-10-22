@@ -19,7 +19,8 @@ test("combined manual pipeline isolates R2 credentials to publish after successf
   const collect = workflow.split(/^  collect:/m)[1].split(/^  publish:/m)[0];
   const publish = workflow.split(/^  publish:/m)[1];
   assert.match(workflow, /workflow_dispatch:/);
-  assert.doesNotMatch(workflow, /schedule:/);
+  assert.match(workflow, /schedule:/);
+  assert.match(workflow, /37 5,11,17,23 \* \* \*/);
   assert.match(workflow, /group: guis-weather-gfs-collector-48h/);
   assert.match(collect, /collect-and-publish\.mjs --live --local/);
   assert.match(collect, /actions\/upload-artifact@v4/);
@@ -104,10 +105,10 @@ test("R2 storage protection allows normal use and blocks before soft limit", () 
   assert.equal(blocked.reason, "R2_STORAGE_PROTECTION_LIMIT");
 });
 
-test("scheduled activation and monitor templates remain disabled before manual E2E", async () => {
+test("verified combined pipeline and freshness monitor schedules are active", async () => {
   const [collector, monitor] = await Promise.all([
-    read(".github/workflows/collect-gfs.schedule.yml.disabled"),
-    read(".github/workflows/monitor-gfs-schedule.yml.disabled")
+    read(".github/workflows/collect-gfs-automatic.yml"),
+    read(".github/workflows/monitor-gfs-schedule.yml")
   ]);
   assert.match(collector, /37 5,11,17,23 \* \* \*/);
   assert.match(monitor, /17 2,8,14,20 \* \* \*/);

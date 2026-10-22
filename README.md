@@ -10,17 +10,17 @@ every accumulation contract and source-shard SHA-256 while allowing a site
 query to read one tile instead of all forecast shards. Source forecast objects
 and the root run manifest remain immutable.
 
-The P2-I-H-2 pipeline keeps the recovery workflows and adds a combined
-collect-to-publish workflow. Until its manual end-to-end run succeeds,
-`.github/workflows/collect-gfs-automatic.yml` is `workflow_dispatch` only and
-the schedule remains disabled.
+The P2-I-H-2B pipeline keeps the recovery workflows and runs the verified
+combined collect-to-publish workflow at 05:37, 11:37, 17:37 and 23:37 UTC.
+The schedule was activated only after a new official run passed the complete
+manual collect, Artifact, R2 publication and latest-pointer E2E.
 
 Independent recovery workflows remain available:
 
 - `.github/workflows/r2-preflight.yml` performs a private canary put/head/get/hash/delete test without NOAA access;
 - `.github/workflows/collect-gfs.yml` collects and validates NOAA data, then stores a three-day GitHub Actions artifact without R2 credentials;
 - `.github/workflows/publish-gfs.yml` accepts a verified artifact only when the trusted main-branch run's `collect` job succeeded, including recovery from a combined workflow whose later publish job failed; it revalidates and publishes without NOAA access;
-- no `schedule`, `pull_request`, or untrusted code execution trigger exists;
+- recovery workflows have no `schedule`, `pull_request`, or untrusted-code trigger;
 - the manual collector requires every official forecast file from f001 through f048;
 - run discovery and 48 GRIB downloads are capped at 55 upstream requests and
   15 MiB, with a minimum ten-second interval;
@@ -93,9 +93,8 @@ credential and granted only to a separately reviewed retention job.
 
 ## Scheduling and recovery
 
-`.github/workflows/collect-gfs.schedule.yml.disabled` contains the proposed
-05:37/11:37/17:37/23:37 UTC schedule. Its non-YAML extension is a deliberate
-hard stop: the schedule is not active. The disabled template uses one concurrency group with
+`.github/workflows/collect-gfs-automatic.yml` contains the active
+05:37/11:37/17:37/23:37 UTC schedule. It uses one concurrency group with
 `cancel-in-progress: false`, so two collection jobs cannot publish the same run
 concurrently. `NO_NEW_COMPLETE_RUN` is returned only after the Preview R2 latest
 pointer, source manifest, tile-index manifest, and referenced object metadata have
