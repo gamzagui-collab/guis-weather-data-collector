@@ -254,7 +254,13 @@ test("latest run must publish the configured final forecast index before downloa
   const url = buildRawIndexUrl({ ...run, forecastHour: 120 });
   assert.equal(url.pathname.endsWith("gfs.t06z.pgrb2.0p25.f120.idx"), true);
   const availableBudget = new DownloadBudget({ maxRequests: 1, maxBytes: 0, minimumIntervalMs: 0 });
-  assert.equal(await verifyRunComplete(run, 120, availableBudget, async () => ({ status: 200 })), true);
+  let requestOptions;
+  assert.equal(await verifyRunComplete(run, 120, availableBudget, async (_url, options) => {
+    requestOptions = options;
+    return { status: 206, body: { cancel: async () => {} } };
+  }), true);
+  assert.equal(requestOptions.method, "GET");
+  assert.equal(requestOptions.headers.Range, "bytes=0-0");
   const missingBudget = new DownloadBudget({ maxRequests: 1, maxBytes: 0, minimumIntervalMs: 0 });
   assert.equal(await verifyRunComplete(run, 120, missingBudget, async () => ({ status: 404 })), false);
 });
@@ -278,10 +284,12 @@ test("collector package is standalone and pilot workflow is manual-only and seri
   assert.ok(workflow.endsWith("\n"));
 });
 
-test("pilot collector is capped at six NOAA requests and emits sanitized evidence", async () => {
+test("pilot collector uses one completed-cycle probe plus four frames and emits sanitized evidence", async () => {
   const source = await readFile(join(here, "../scripts/collect-and-publish.mjs"), "utf8");
   const summary = await readFile(join(here, "../scripts/write-run-summary.mjs"), "utf8");
-  assert.match(source, /const maxRequests = pilotMode \? 6/);
+  assert.match(source, /const maxRequests = pilotMode \? 5/);
+  assert.match(source, /current\.valueOf\(\) - 6 \* 3_600_000/);
+  assert.doesNotMatch(source, /const candidates =/);
   assert.match(source, /GFS_PILOT_RUN_NOT_COMPLETE/);
   assert.match(source, /weather\.gfs\.pilot-evidence\.v1/);
   assert.match(source, /pilot-evidence\.json/);
