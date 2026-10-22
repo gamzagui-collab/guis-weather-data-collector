@@ -3,6 +3,7 @@ import { dirname, resolve, sep } from "node:path";
 import { canonicalJson, parseJson, sha256 } from "./contracts.mjs";
 import { LocalObjectStore } from "./object-store.mjs";
 import { LATEST_KEY, STATUS_KEY, readLatestPublication } from "./publisher.mjs";
+import { indexManifestKey, validateIndexManifest, validateIndexTile } from "./indexes.mjs";
 
 export const ARTIFACT_SCHEMA = "weather.gfs.collector-artifact.v1";
 export const ARTIFACT_METADATA = "metadata.json";
@@ -30,7 +31,22 @@ export async function createPublicationArtifact({ storeRoot, artifactRoot, prove
   const statusBody = await source.get(STATUS_KEY);
   const status = parseJson(statusBody, "GFS_ARTIFACT_STATUS_INVALID");
   if (status.status !== "SUCCESS" || status.attemptedRunId !== latest.runId) throw new Error("GFS_ARTIFACT_COLLECTION_INCOMPLETE");
-  const keys = [manifest.grid.key, ...manifest.forecasts.map((item) => item.key), latest.manifest.key, STATUS_KEY, LATEST_KEY];
+  const indexKey = indexManifestKey(latest.runId);
+  const indexBody = await source.tryGet(indexKey);
+  let indexManifest = null;
+  if (indexBody) {
+    indexManifest = parseJson(indexBody, "GFS_ARTIFACT_INDEX_INVALID");
+    validateIndexManifest(indexManifest, { runId: latest.runId, sourceManifest: latest.manifest });
+    for (const item of indexManifest.tiles) {
+      const tileBody = await source.get(item.key);
+      if (tileBody.byteLength !== item.bytes || sha256(tileBody) !== item.sha256) throw new Error("GFS_ARTIFACT_INDEX_INTEGRITY_FAILED");
+      validateIndexTile(parseJson(tileBody), { runId: latest.runId, sourceManifest: latest.manifest,
+        descriptor: item, contractCount: manifest.forecasts.length });
+    }
+  }
+  const keys = [manifest.grid.key, ...manifest.forecasts.map((item) => item.key),
+    ...(indexManifest ? [...indexManifest.tiles.map((item) => item.key), indexKey] : []),
+    latest.manifest.key, STATUS_KEY, LATEST_KEY];
   const destination = new LocalObjectStore(artifactPath(artifactRoot, ARTIFACT_PAYLOAD));
   await rm(resolve(artifactRoot), { recursive: true, force: true });
   const objects = [];
@@ -83,5 +99,10 @@ export async function verifyPublicationArtifact({ artifactRoot, expected }) {
   }
   const periods = manifest.forecasts.filter((item) => item.forecastHour === 12).map((item) => item.accumulationPeriod).sort();
   if (JSON.stringify(periods) !== JSON.stringify(["PT12H", "PT6H"])) throw new Error("GFS_ARTIFACT_F012_CONTRACT_INVALID");
+  const indexBody = await store.tryGet(indexManifestKey(latest.runId));
+  if (indexBody) {
+    const indexManifest = parseJson(indexBody, "GFS_ARTIFACT_INDEX_INVALID");
+    validateIndexManifest(indexManifest, { runId: latest.runId, sourceManifest: latest.manifest });
+  }
   return { metadata, latest, manifest };
 }

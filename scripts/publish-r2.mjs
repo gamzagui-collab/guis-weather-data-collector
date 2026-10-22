@@ -5,6 +5,7 @@ import { LocalObjectStore } from "../src/object-store.mjs";
 import { parseJson, sha256 } from "../src/contracts.mjs";
 import { LATEST_KEY, STATUS_KEY, readLatestPublication } from "../src/publisher.mjs";
 import { r2Args, runAws, verifiedR2Environment } from "../src/r2-cli.mjs";
+import { indexManifestKey, validateIndexManifest } from "../src/indexes.mjs";
 
 if (!process.argv.includes("--execute")) throw new Error("R2_REMOTE_EXECUTION_FLAG_REQUIRED");
 const index = process.argv.indexOf("--verified-local-store");
@@ -14,7 +15,12 @@ verifiedR2Environment();
 const store = new LocalObjectStore(localRoot);
 const { latest, manifest } = await readLatestPublication(store);
 
-const descriptors = [manifest.grid, ...manifest.forecasts, latest.manifest];
+const localIndexBody = await store.tryGet(indexManifestKey(latest.runId));
+const localIndex = localIndexBody ? parseJson(localIndexBody) : null;
+if (localIndex) validateIndexManifest(localIndex, { runId: latest.runId, sourceManifest: latest.manifest });
+const descriptors = [manifest.grid, ...manifest.forecasts,
+  ...(localIndex ? [...localIndex.tiles, { key: indexManifestKey(latest.runId), bytes: localIndexBody.byteLength, sha256: sha256(localIndexBody) }] : []),
+  latest.manifest];
 for (const descriptor of descriptors) {
   const body = await store.get(descriptor.key);
   if (body.byteLength !== descriptor.bytes || sha256(body) !== descriptor.sha256) throw new Error("R2_LOCAL_INTEGRITY_FAILED");

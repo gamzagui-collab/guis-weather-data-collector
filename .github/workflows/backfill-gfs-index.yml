@@ -1,0 +1,86 @@
+name: Backfill Verified GFS Tile Index
+
+on:
+  workflow_dispatch:
+    inputs:
+      collect_run_id:
+        description: Successful 48-hour NOAA GFS collector workflow run ID
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: guis-weather-gfs-r2-index-publisher
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      COLLECT_RUN_ID: ${{ inputs.collect_run_id }}
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID_V3 }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY_V3 }}
+      R2_BUCKET: guis-weather-gfs-preview
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify source workflow identity and artifact
+        id: source
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const runId = Number(process.env.COLLECT_RUN_ID);
+            if (!Number.isSafeInteger(runId) || runId < 1) {
+              core.setFailed("COLLECT_RUN_ID_INVALID");
+              return;
+            }
+            const { owner, repo } = context.repo;
+            const { data: run } = await github.rest.actions.getWorkflowRun({ owner, repo, run_id: runId });
+            const validPath = String(run.path || "").split("@")[0] === ".github/workflows/collect-gfs.yml";
+            if (run.repository?.full_name !== `${owner}/${repo}` || run.event !== "workflow_dispatch" ||
+                run.head_branch !== "main" || run.status !== "completed" || run.conclusion !== "success" || !validPath) {
+              core.setFailed("COLLECT_WORKFLOW_IDENTITY_OR_OUTCOME_INVALID");
+              return;
+            }
+            core.setOutput("head_sha", run.head_sha);
+            const { data: artifacts } = await github.rest.actions.listWorkflowRunArtifacts({ owner, repo, run_id: runId });
+            const matches = artifacts.artifacts.filter((item) => !item.expired && /^gfs-48h-\d{8}T\d{6}Z$/.test(item.name));
+            if (matches.length !== 1) {
+              core.setFailed("COLLECT_ARTIFACT_IDENTITY_INVALID");
+              return;
+            }
+            core.setOutput("artifact_name", matches[0].name);
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pinned R2 client
+        run: python -m pip install --disable-pip-version-check awscli==1.42.58
+      - name: Download approved collector artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ steps.source.outputs.artifact_name }}
+          path: artifact-package
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.collect_run_id }}
+      - name: Verify source package without NOAA access
+        env:
+          GFS_ARTIFACT_ROOT: artifact-package
+          GFS_EXPECTED_REPOSITORY: ${{ github.repository }}
+          GFS_EXPECTED_REF: main
+          GFS_EXPECTED_SHA: ${{ steps.source.outputs.head_sha }}
+          GFS_EXPECTED_RUN_ID: ${{ inputs.collect_run_id }}
+        run: |
+          npm test
+          node scripts/verify-artifact.mjs
+      - name: Build versioned tile index from verified JSON only
+        run: node scripts/backfill-index.mjs --source-store artifact-package/payload --output-store index-package
+      - name: Publish immutable tiles and index manifest last
+        run: node scripts/publish-index-r2.mjs --execute --source-store artifact-package/payload --index-store index-package

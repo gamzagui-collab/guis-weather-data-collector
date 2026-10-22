@@ -4,6 +4,12 @@ This repository collects official NOAA/NCEP GFS 0.25 degree
 surface APCP GRIB2, decodes it with ecCodes, verifies its time/unit/grid
 contract, and publishes immutable JSON shards.
 
+P2-I-H-1 adds a versioned 8 x 8 grid-tile index for the 31 x 31 Korea grid.
+The index is derived only from already verified forecast shards. It preserves
+every accumulation contract and source-shard SHA-256 while allowing a site
+query to read one tile instead of all forecast shards. Source forecast objects
+and the root run manifest remain immutable.
+
 The P2-I-G 48-hour validation remains intentionally manual-only and split into three
 independent workflows:
 
@@ -28,6 +34,8 @@ status/collector.json
 runs/{runId}/manifest.json
 runs/{runId}/grid.json
 runs/{runId}/forecasts/{frameId}.json
+runs/{runId}/indexes/v1/manifest.json
+runs/{runId}/indexes/v1/tiles/{tileId}.json
 ```
 
 The publisher writes the grid and forecast shards, reads them back, verifies
@@ -39,6 +47,13 @@ with a temporary file and rename.
 `frameId` includes forecast hour, accumulation period, accumulation start, and
 accumulation end. Therefore the official f012 PT12H and f012 PT6H records remain
 distinct even though they have the same `validAt`.
+
+The tile-index manifest records the exact root-manifest SHA-256 and is written
+only after every immutable tile has been uploaded and read back successfully.
+An index whose source hash differs from the root run manifest is rejected. The
+manual-only `backfill-gfs-index.yml` workflow can build this derived index for a
+previously published run from its verified collector artifact; it does not call
+NOAA and it does not update `latest.json`.
 
 The collector artifact records its repository, branch, commit, workflow run ID,
 object allowlist, byte lengths, and SHA-256 values. The publisher checks the

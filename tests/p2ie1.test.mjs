@@ -73,11 +73,11 @@ async function artifactFixture() {
   return { root, storeRoot, artifactRoot, close: () => rm(root, { recursive: true, force: true }) };
 }
 
-test("verified artifact contains all nine publication objects and both f012 contracts", async () => {
+test("verified artifact contains source, index and both f012 contracts", async () => {
   const holder = await artifactFixture();
   try {
     const created = await createPublicationArtifact({ storeRoot: holder.storeRoot, artifactRoot: holder.artifactRoot, provenance });
-    assert.equal(created.objectCount, 9);
+    assert.equal(created.objectCount, 11);
     const verified = await verifyPublicationArtifact({ artifactRoot: holder.artifactRoot, expected: provenance });
     assert.equal(verified.manifest.forecasts.length, 5);
     const periods = verified.manifest.forecasts.filter((item) => item.forecastHour === 12).map((item) => item.accumulationPeriod);

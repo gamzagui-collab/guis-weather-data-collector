@@ -10,6 +10,7 @@ import {
   validateGridShard
 } from "./contracts.mjs";
 import { assertObjectStore } from "./object-store.mjs";
+import { buildTileIndexObjects, validateIndexManifest, validateIndexTile } from "./indexes.mjs";
 
 export const LATEST_KEY = "latest.json";
 export const STATUS_KEY = "status/collector.json";
@@ -54,6 +55,12 @@ export function buildRunObjects(dataset) {
   };
   const manifestEncoded = encodeObject(manifest);
   const manifestObject = { key: `${prefix}/manifest.json`, ...manifestEncoded };
+  const indexPlan = buildTileIndexObjects({
+    runId,
+    sourceManifest: { key: manifestObject.key, sha256: manifestObject.sha256, bytes: manifestObject.bytes },
+    grid,
+    forecasts: forecasts.map((value, index) => ({ descriptor: forecastObjects[index], value }))
+  });
   const latest = {
     schemaVersion: LATEST_SCHEMA,
     status: "AVAILABLE",
@@ -64,7 +71,7 @@ export function buildRunObjects(dataset) {
     coverage: dataset.coverage ?? null,
     manifest: { key: manifestObject.key, sha256: manifestObject.sha256, bytes: manifestObject.bytes }
   };
-  return { runId, gridObject, forecastObjects, manifest, manifestObject, latest };
+  return { runId, gridObject, forecastObjects, manifest, manifestObject, indexPlan, latest };
 }
 
 export async function publishDataset(store, dataset, { now = new Date(), beforeLatestSwap } = {}) {
@@ -78,6 +85,20 @@ export async function publishDataset(store, dataset, { now = new Date(), beforeL
     for (const item of plan.forecastObjects) {
       await verifyStoredObject(store, item, (value) => validateForecastShard(value, grid.grid.points.length));
     }
+    for (const item of plan.indexPlan.tileObjects) await store.put(item.key, item.body);
+    for (const item of plan.indexPlan.tileObjects) {
+      await verifyStoredObject(store, item, (value) => validateIndexTile(value, {
+        runId: plan.runId,
+        sourceManifest: plan.latest.manifest,
+        descriptor: item,
+        contractCount: plan.forecastObjects.length
+      }));
+    }
+    await store.put(plan.indexPlan.manifestObject.key, plan.indexPlan.manifestObject.body);
+    await verifyStoredObject(store, plan.indexPlan.manifestObject, (value) => validateIndexManifest(value, {
+      runId: plan.runId,
+      sourceManifest: plan.latest.manifest
+    }));
     await store.put(plan.manifestObject.key, plan.manifestObject.body);
     await verifyStoredObject(store, plan.manifestObject, (value) => {
       if (value.schemaVersion !== MANIFEST_SCHEMA || value.status !== "COMPLETE" || value.runId !== plan.runId) {
@@ -99,8 +120,10 @@ export async function publishDataset(store, dataset, { now = new Date(), beforeL
     return {
       runId: plan.runId,
       latest: plan.latest,
-      objectCount: plan.manifest.objectCount + 3,
-      runBytes: plan.gridObject.bytes + plan.forecastObjects.reduce((sum, item) => sum + item.bytes, 0) + plan.manifestObject.bytes,
+      objectCount: plan.manifest.objectCount + plan.indexPlan.tileObjects.length + 4,
+      runBytes: plan.gridObject.bytes + plan.forecastObjects.reduce((sum, item) => sum + item.bytes, 0)
+        + plan.indexPlan.tileObjects.reduce((sum, item) => sum + item.bytes, 0)
+        + plan.indexPlan.manifestObject.bytes + plan.manifestObject.bytes,
       manifestSha256: plan.manifestObject.sha256
     };
   } catch (error) {
