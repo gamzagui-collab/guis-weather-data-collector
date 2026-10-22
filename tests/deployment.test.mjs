@@ -280,7 +280,8 @@ test("collector package is standalone and pilot workflow is manual-only and seri
   assert.match(workflow, /GFS_FORECAST_HOURS: "1,3,6,12"/);
   assert.match(workflow, /GFS_MAX_DOWNLOAD_BYTES: "15728640"/);
   assert.match(workflow, /R2_BUCKET: guis-weather-gfs-preview/);
-  assert.match(workflow, /secrets\.R2_SECRET_ACCESS_KEY/);
+  assert.match(workflow, /secrets\.R2_ACCESS_KEY_ID_V3/);
+  assert.match(workflow, /secrets\.R2_SECRET_ACCESS_KEY_V3/);
   assert.ok(workflow.endsWith("\n"));
 });
 
