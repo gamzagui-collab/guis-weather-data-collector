@@ -4,6 +4,7 @@ import { delimiter, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { LocalObjectStore } from "../src/object-store.mjs";
 import { runCollectorWorkflow } from "../src/workflow.mjs";
+import { classifyDiscoveredRun } from "../src/run-state.mjs";
 import {
   DownloadBudget, KOREA_BOUNDS, NOMADS_PRODUCT_DIRECTORY, downloadFrame,
   fetchText, listPublishedRuns, parseCycles, parseRunDates, verifyRunComplete
@@ -76,8 +77,8 @@ function runKey(run) {
   return run.modelRunAt.replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
 }
 
-async function alreadyCollectedArtifact(run) {
-  if (process.env.GITHUB_ACTIONS !== "true") return false;
+async function existingCollectedArtifact(run) {
+  if (process.env.GITHUB_ACTIONS !== "true") return null;
   const token = process.env.GITHUB_TOKEN;
   const repository = process.env.GITHUB_REPOSITORY;
   if (!token || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository || "")) {
@@ -109,10 +110,15 @@ async function alreadyCollectedArtifact(run) {
     const trustedEvent = new Set(["workflow_dispatch", "schedule"]).has(previousRun.event);
     if (previousRun.repository?.full_name === repository && previousRun.head_branch === "main"
         && trustedWorkflow && trustedEvent) {
-      return true;
+      return {
+        name: artifact.name,
+        workflowRunId: String(artifact.workflow_run.id),
+        commit: previousRun.head_sha,
+        modelRunAt: run.modelRunAt
+      };
     }
   }
-  return false;
+  return null;
 }
 
 async function collectDataset(run) {
@@ -166,31 +172,33 @@ async function preserveEvidence({ status, result = null, error = null }) {
 }
 
 try {
-  const result = await runCollectorWorkflow({
-    store,
-    discoverRun: async () => {
-      discoveredRun = await discoverRun();
-      if (await alreadyCollectedArtifact(discoveredRun)) throw new Error("GFS_RUN_ALREADY_COLLECTED");
-      return discoveredRun;
-    },
-    collectDataset
+  discoveredRun = await discoverRun();
+  const artifact = await existingCollectedArtifact(discoveredRun);
+  const publishedComplete = process.env.GFS_PUBLISHED_COMPLETE === "true";
+  const decision = classifyDiscoveredRun({
+    discoveredModelRunAt: discoveredRun.modelRunAt,
+    publishedModelRunAt: process.env.GFS_PUBLISHED_MODEL_RUN_AT || null,
+    publishedComplete,
+    artifact
   });
+  let result;
+  if (decision.action === "NOOP") {
+    result = { status: decision.runState, modelRunAt: discoveredRun.modelRunAt,
+      publication: null, reason: "LATEST_COMPLETE_RUN_ALREADY_PUBLISHED", ...decision };
+  } else if (decision.action === "PUBLISH_EXISTING") {
+    result = { status: decision.runState, modelRunAt: discoveredRun.modelRunAt,
+      publication: null, reason: "VERIFIED_ARTIFACT_REQUIRES_PUBLICATION_CHECK", artifact, ...decision };
+  } else {
+    const collected = await runCollectorWorkflow({ store, discoverRun: async () => discoveredRun, collectDataset });
+    result = { ...collected, status: "NEW_RUN", ...decision };
+  }
   await preserveEvidence({ status: "SUCCESS", result });
-  if (process.env.GITHUB_OUTPUT && discoveredRun) {
+  if (process.env.GITHUB_OUTPUT) {
+    const artifactLines = artifact ? `artifact_name=${artifact.name}\nartifact_run_id=${artifact.workflowRunId}\nartifact_head_sha=${artifact.commit}\n` : "";
     await appendFile(process.env.GITHUB_OUTPUT,
-      `model_run_key=${runKey(discoveredRun)}\ncollection_outcome=${result.status}\n`, "utf8");
+      `model_run_key=${runKey(discoveredRun)}\ncollection_outcome=${result.status}\n${artifactLines}`, "utf8");
   }
 } catch (error) {
-  if (error?.message === "GFS_RUN_ALREADY_COLLECTED" && discoveredRun) {
-    const result = { status: "UNCHANGED", modelRunAt: discoveredRun.modelRunAt,
-      publication: null, reason: "VERIFIED_ARTIFACT_ALREADY_EXISTS" };
-    await preserveEvidence({ status: "SUCCESS", result });
-    if (process.env.GITHUB_OUTPUT) {
-      await appendFile(process.env.GITHUB_OUTPUT,
-        `model_run_key=${runKey(discoveredRun)}\ncollection_outcome=UNCHANGED\n`, "utf8");
-    }
-  } else {
   const evidence = await preserveEvidence({ status: "FAILED", error });
   throw new Error(evidence.failureCode);
-  }
 }

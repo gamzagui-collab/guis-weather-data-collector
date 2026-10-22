@@ -38,10 +38,12 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/collect-and-publish.mjs --live --local
       - name: Build verified short-lived publication artifact
+        if: steps.collect.outputs.collection_outcome == 'NEW_RUN'
         env:
           GFS_ARTIFACT_ROOT: artifact-package
         run: node scripts/create-artifact.mjs --verified-local-store .mock-r2
       - name: Upload verified collector artifact
+        if: steps.collect.outputs.collection_outcome == 'NEW_RUN'
         id: artifact
         uses: actions/upload-artifact@v4
         with:
@@ -51,6 +53,7 @@ jobs:
           retention-days: 3
           compression-level: 6
       - name: Record verified Artifact ID
+        if: steps.collect.outputs.collection_outcome == 'NEW_RUN'
         run: echo "Artifact ID ${{ steps.artifact.outputs.artifact-id }}" >> "$GITHUB_STEP_SUMMARY"
       - name: Write sanitized collection summary
         if: always()

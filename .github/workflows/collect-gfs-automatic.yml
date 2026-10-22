@@ -12,13 +12,45 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  publication-state:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      published_complete: ${{ steps.inspect.outputs.published_complete }}
+      published_model_run_at: ${{ steps.inspect.outputs.published_model_run_at }}
+      published_run_id: ${{ steps.inspect.outputs.published_run_id }}
+      r2_object_count: ${{ steps.inspect.outputs.r2_object_count }}
+      r2_total_bytes: ${{ steps.inspect.outputs.r2_total_bytes }}
+    env:
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID_V3 }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY_V3 }}
+      R2_BUCKET: guis-weather-gfs-preview
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pinned R2 client
+        run: python -m pip install --disable-pip-version-check awscli==1.42.58
+      - name: Verify published R2 state and storage protection
+        id: inspect
+        run: node scripts/inspect-r2-publication.mjs --execute
+
   collect:
+    needs: publication-state
     runs-on: ubuntu-latest
     timeout-minutes: 30
     outputs:
       artifact_name: ${{ steps.identity.outputs.artifact_name }}
       model_run_key: ${{ steps.collect.outputs.model_run_key }}
       collection_outcome: ${{ steps.collect.outputs.collection_outcome }}
+      artifact_name: ${{ steps.collect.outputs.artifact_name || steps.identity.outputs.artifact_name }}
+      artifact_run_id: ${{ steps.collect.outputs.artifact_run_id || github.run_id }}
+      artifact_head_sha: ${{ steps.collect.outputs.artifact_head_sha || github.sha }}
     env:
       GFS_COLLECTION_MODE: "48H"
       GFS_FORECAST_HOURS: "1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48"
@@ -40,19 +72,21 @@ jobs:
         id: collect
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          GFS_PUBLISHED_COMPLETE: ${{ needs.publication-state.outputs.published_complete }}
+          GFS_PUBLISHED_MODEL_RUN_AT: ${{ needs.publication-state.outputs.published_model_run_at }}
         run: node scripts/collect-and-publish.mjs --live --local
       - name: Build verified publication artifact
-        if: steps.collect.outputs.collection_outcome == 'PUBLISHED'
+        if: steps.collect.outputs.collection_outcome == 'NEW_RUN'
         env:
           GFS_ARTIFACT_ROOT: artifact-package
         run: node scripts/create-artifact.mjs --verified-local-store .mock-r2
       - name: Define immutable artifact identity
-        if: steps.collect.outputs.collection_outcome == 'PUBLISHED'
+        if: steps.collect.outputs.collection_outcome == 'NEW_RUN'
         id: identity
         shell: bash
         run: echo "artifact_name=gfs-48h-${{ steps.collect.outputs.model_run_key }}" >> "$GITHUB_OUTPUT"
       - name: Upload verified collector artifact
-        if: steps.collect.outputs.collection_outcome == 'PUBLISHED'
+        if: steps.collect.outputs.collection_outcome == 'NEW_RUN'
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.identity.outputs.artifact_name }}
@@ -82,10 +116,13 @@ jobs:
         run: node scripts/write-run-summary.mjs
 
   publish:
-    needs: collect
-    if: needs.collect.result == 'success' && needs.collect.outputs.collection_outcome == 'PUBLISHED'
+    needs: [publication-state, collect]
+    if: needs.collect.result == 'success' && (needs.collect.outputs.collection_outcome == 'NEW_RUN' || needs.collect.outputs.collection_outcome == 'ARTIFACT_EXISTS_UNPUBLISHED')
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    concurrency:
+      group: guis-weather-gfs-r2-publisher
+      cancel-in-progress: false
     env:
       R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
       R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID_V3 }}
@@ -106,13 +143,16 @@ jobs:
         with:
           name: ${{ needs.collect.outputs.artifact_name }}
           path: artifact-package
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ needs.collect.outputs.artifact_run_id }}
       - name: Reverify artifact provenance and hashes without NOAA access
         env:
           GFS_ARTIFACT_ROOT: artifact-package
           GFS_EXPECTED_REPOSITORY: ${{ github.repository }}
           GFS_EXPECTED_REF: main
-          GFS_EXPECTED_SHA: ${{ github.sha }}
-          GFS_EXPECTED_RUN_ID: ${{ github.run_id }}
+          GFS_EXPECTED_SHA: ${{ needs.collect.outputs.artifact_head_sha }}
+          GFS_EXPECTED_RUN_ID: ${{ needs.collect.outputs.artifact_run_id }}
         run: node scripts/verify-artifact.mjs
       - name: Publish immutable objects and switch latest last
         id: publish

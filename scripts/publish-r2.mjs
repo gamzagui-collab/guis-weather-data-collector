@@ -73,7 +73,7 @@ try {
     parseJson(remoteBody, "R2_REMOTE_JSON_INVALID");
   }
   const latestBody = await store.get(LATEST_KEY);
-  const result = { status: "PUBLISHED", runId: latest.runId, modelRunAt: latest.modelRunAt,
+  const result = { status: "PUBLISHED_COMPLETE", runId: latest.runId, modelRunAt: latest.modelRunAt,
     latestValidAt: latest.latestValidAt, objectCount: ordered.length, uploadedCount, reusedCount,
     manifestSha256: latest.manifest.sha256, latestSha256: sha256(latestBody) };
   if (process.env.GITHUB_OUTPUT) {

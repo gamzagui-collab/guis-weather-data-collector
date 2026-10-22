@@ -107,7 +107,8 @@ test("collector uses fatal coverage validation and sanitized collection evidence
   assert.match(script, /GFS_NO_COMPLETE_48H_RUN_WITHIN_BUDGET/);
   assert.match(script, /--expected-forecast-hours/);
   assert.match(script, /weather\.gfs\.collection-evidence\.v2/);
-  assert.match(script, /GFS_RUN_ALREADY_COLLECTED/);
+  assert.match(script, /existingCollectedArtifact/);
+  assert.match(script, /classifyDiscoveredRun/);
   assert.match(script, /GFS_MAX_DOWNLOAD_BYTES_INVALID/);
   assert.doesNotMatch(script, /ACCESS_KEY|SECRET_ACCESS_KEY/);
   assert.match(analyzer, /Incomplete forecast-hour coverage/);

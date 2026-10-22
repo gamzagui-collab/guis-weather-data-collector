@@ -18,6 +18,9 @@ concurrency:
 
 jobs:
   publish:
+    concurrency:
+      group: guis-weather-gfs-r2-publisher
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:

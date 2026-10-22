@@ -97,8 +97,16 @@ credential and granted only to a separately reviewed retention job.
 05:37/11:37/17:37/23:37 UTC schedule. Its non-YAML extension is a deliberate
 hard stop: the schedule is not active. The disabled template uses one concurrency group with
 `cancel-in-progress: false`, so two collection jobs cannot publish the same run
-concurrently. The collector compares the discovered run with `latest.json` and
-returns `UNCHANGED` rather than downloading it again.
+concurrently. `NO_NEW_COMPLETE_RUN` is returned only after the Preview R2 latest
+pointer, source manifest, tile-index manifest, and referenced object metadata have
+been verified. If a trusted Artifact exists but R2 publication is incomplete,
+`ARTIFACT_EXISTS_UNPUBLISHED` reuses it in the publish-only job without another
+NOAA download.
+
+R2 credentials remain outside the collector job. A separate publication-state
+job performs the fail-closed R2 integrity and storage check. The soft storage stop
+is 8 GiB; reaching it blocks another run before NOAA download and requires an
+explicit retention or capacity decision.
 
 The future repository must monitor:
 

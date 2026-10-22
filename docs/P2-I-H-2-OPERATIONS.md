@@ -1,5 +1,29 @@
 # P2-I-H-2 GFS automatic collection operations
 
+## Run and publication states
+
+- `NEW_RUN`: the newest complete official f048 run has no trusted Artifact and is collected once.
+- `ARTIFACT_EXISTS_UNPUBLISHED`: a trusted Artifact exists while verified R2 publication is behind or incomplete; publish reuses it with zero NOAA redownloads.
+- `PUBLISHED_COMPLETE`: R2 latest, source manifest, v1 index manifest, and referenced object descriptors agree.
+- `NO_NEW_COMPLETE_RUN`: the newest complete official run is not newer than verified R2; this is a successful no-op.
+- Collection and publication failures remain separate workflow failures.
+
+Artifact existence alone never proves publication. R2 credentials are supplied
+only to publication-state and publisher jobs, never to the NOAA collector job.
+
+## Storage protection
+
+The publication-state preflight inventories the private Preview bucket. The next
+indexed run is conservatively estimated at 20 MiB. Collection is blocked before
+the projected bucket total reaches the 8 GiB soft stop. No run is automatically
+deleted; retention remains separately approved.
+
+## Concurrency
+
+Collector workflows share `guis-weather-gfs-collector-48h`. Automatic and manual
+publishers additionally share `guis-weather-gfs-r2-publisher`, preventing concurrent
+`latest.json` transitions. The publisher also rejects regression to an older run.
+
 ## Scope and hard limits
 
 - Product: NOAA/NCEP GFS 0.25 degree surface APCP.
@@ -7,8 +31,8 @@
 - Maximum per attempt: 55 NOAA HTTP requests and 15 MiB received.
 - Requests are sequential with at least ten seconds between requests.
 - One concurrency group serializes manual and automatic collection/publish.
-- The collect job has no R2 credentials. Only the publish job receives the
-  existing bucket-scoped Preview credentials.
+- The collect job has no R2 credentials. Only publication-state and publish jobs
+  receive the existing bucket-scoped Preview credentials.
 - Weather GFS public access remains disabled.
 
 ## Schedule gate

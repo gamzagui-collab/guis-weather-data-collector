@@ -8,26 +8,99 @@ import { evaluateGfsFreshness } from "../src/freshness.mjs";
 import { fixture } from "./deployment.test.mjs";
 import { LocalObjectStore } from "../src/object-store.mjs";
 import { publishDataset } from "../src/publisher.mjs";
+import { classifyDiscoveredRun } from "../src/run-state.mjs";
+import { evaluateStorageProtection, R2_STORAGE_STOP_BYTES } from "../src/storage-policy.mjs";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
 const read = (relative) => readFile(join(here, "..", relative), "utf8");
 
 test("combined manual pipeline isolates R2 credentials to publish after successful collect", async () => {
   const workflow = await read(".github/workflows/collect-gfs-automatic.yml");
-  const [beforePublish, publish] = workflow.split(/^  publish:/m);
+  const collect = workflow.split(/^  collect:/m)[1].split(/^  publish:/m)[0];
+  const publish = workflow.split(/^  publish:/m)[1];
   assert.match(workflow, /workflow_dispatch:/);
   assert.doesNotMatch(workflow, /schedule:/);
   assert.match(workflow, /group: guis-weather-gfs-collector-48h/);
-  assert.match(beforePublish, /collect-and-publish\.mjs --live --local/);
-  assert.match(beforePublish, /actions\/upload-artifact@v4/);
-  assert.doesNotMatch(beforePublish, /secrets\.|R2_(?:ACCOUNT|ACCESS|SECRET|BUCKET)/);
-  assert.match(publish, /needs: collect/);
-  assert.match(publish, /if: needs\.collect\.result == 'success' && needs\.collect\.outputs\.collection_outcome == 'PUBLISHED'/);
+  assert.match(collect, /collect-and-publish\.mjs --live --local/);
+  assert.match(collect, /actions\/upload-artifact@v4/);
+  assert.doesNotMatch(collect, /secrets\.|R2_(?:ACCOUNT|ACCESS|SECRET|BUCKET)/);
+  assert.match(publish, /needs: \[publication-state, collect\]/);
+  assert.match(publish, /ARTIFACT_EXISTS_UNPUBLISHED/);
   assert.match(publish, /secrets\.R2_ACCESS_KEY_ID_V3/);
   assert.match(publish, /actions\/download-artifact@v4/);
+  assert.match(publish, /run-id: \$\{\{ needs\.collect\.outputs\.artifact_run_id \}\}/);
   assert.match(publish, /verify-artifact\.mjs/);
   assert.match(publish, /publish-r2\.mjs --execute/);
   assert.doesNotMatch(publish, /collect-and-publish|src\/noaa|nomads\.ncep/);
+});
+
+test("publication state job validates R2 without passing R2 secrets to collector", async () => {
+  const workflow = await read(".github/workflows/collect-gfs-automatic.yml");
+  const publicationState = workflow.split(/^  publication-state:/m)[1].split(/^  collect:/m)[0];
+  const collect = workflow.split(/^  collect:/m)[1].split(/^  publish:/m)[0];
+  assert.match(publicationState, /inspect-r2-publication\.mjs --execute/);
+  assert.match(publicationState, /secrets\.R2_SECRET_ACCESS_KEY_V3/);
+  assert.doesNotMatch(collect, /secrets\.R2_SECRET_ACCESS_KEY_V3/);
+  assert.match(collect, /GFS_PUBLISHED_MODEL_RUN_AT/);
+});
+
+test("new complete run without artifact requires collection", () => {
+  assert.deepEqual(classifyDiscoveredRun({
+    discoveredModelRunAt: "2026-10-22T18:00:00Z",
+    publishedModelRunAt: "2026-10-22T12:00:00Z",
+    publishedComplete: true
+  }), { runState: "NEW_RUN", publicationState: "NOT_PUBLISHED", action: "COLLECT" });
+});
+
+test("artifact without complete R2 publication is recovered without NOAA recollection", () => {
+  const result = classifyDiscoveredRun({
+    discoveredModelRunAt: "2026-10-22T18:00:00Z",
+    publishedModelRunAt: "2026-10-22T12:00:00Z",
+    publishedComplete: true,
+    artifact: {
+      name: "gfs-48h-20261022T180000Z",
+      workflowRunId: "39826531450",
+      commit: "3ca5539642488bb1bc17a1ede3d3b619588e7536",
+      modelRunAt: "2026-10-22T18:00:00Z"
+    }
+  });
+  assert.equal(result.runState, "ARTIFACT_EXISTS_UNPUBLISHED");
+  assert.equal(result.action, "PUBLISH_EXISTING");
+});
+
+test("published complete latest run is a normal no-op", () => {
+  const result = classifyDiscoveredRun({
+    discoveredModelRunAt: "2026-10-22T12:00:00Z",
+    publishedModelRunAt: "2026-10-22T12:00:00Z",
+    publishedComplete: true
+  });
+  assert.equal(result.runState, "NO_NEW_COMPLETE_RUN");
+  assert.equal(result.publicationState, "PUBLISHED_COMPLETE");
+  assert.equal(result.action, "NOOP");
+});
+
+test("invalid existing Artifact identity fails closed", () => {
+  assert.throws(() => classifyDiscoveredRun({
+    discoveredModelRunAt: "2026-10-22T18:00:00Z",
+    artifact: { name: "wrong", workflowRunId: "1", commit: "0".repeat(40), modelRunAt: "2026-10-22T18:00:00Z" }
+  }), /ARTIFACT_IDENTITY_INVALID/);
+});
+
+test("automatic and manual R2 publishers share one publication concurrency group", async () => {
+  const [automatic, manual] = await Promise.all([
+    read(".github/workflows/collect-gfs-automatic.yml"),
+    read(".github/workflows/publish-gfs.yml")
+  ]);
+  assert.match(automatic.split(/^  publish:/m)[1], /group: guis-weather-gfs-r2-publisher/);
+  assert.match(manual.split(/^  publish:/m)[1], /group: guis-weather-gfs-r2-publisher/);
+});
+
+test("R2 storage protection allows normal use and blocks before soft limit", () => {
+  const allowed = evaluateStorageProtection({ currentBytes: 100 * 1024 * 1024 });
+  assert.equal(allowed.status, "ALLOW");
+  const blocked = evaluateStorageProtection({ currentBytes: R2_STORAGE_STOP_BYTES - 10 });
+  assert.equal(blocked.status, "BLOCKED");
+  assert.equal(blocked.reason, "R2_STORAGE_PROTECTION_LIMIT");
 });
 
 test("scheduled activation and monitor templates remain disabled before manual E2E", async () => {
@@ -59,8 +132,8 @@ test("collector preserves sanitized success and failure evidence before exiting"
   ]);
   assert.match(collector, /weather\.gfs\.collection-evidence\.v2/);
   assert.match(collector, /status: "FAILED"/);
-  assert.match(collector, /collection_outcome=UNCHANGED/);
-  assert.match(collector, /VERIFIED_ARTIFACT_ALREADY_EXISTS/);
+  assert.match(collector, /VERIFIED_ARTIFACT_REQUIRES_PUBLICATION_CHECK/);
+  assert.match(collector, /LATEST_COMPLETE_RUN_ALREADY_PUBLISHED/);
   assert.match(collector, /failureCode: error \? failureCode\(error\) : null/);
   assert.doesNotMatch(operation, /ACCESS_KEY|SECRET_ACCESS_KEY|GITHUB_TOKEN/);
   assert.match(summary, /attempt started:/);
@@ -143,5 +216,5 @@ test("publisher exposes manifest and latest SHA without logging credentials", as
 
 test("collector package version marks the P2-I-H-2 deployment contract", async () => {
   const packageJson = JSON.parse(await read("package.json"));
-  assert.equal(packageJson.version, "0.4.0-p2ih2");
+  assert.equal(packageJson.version, "0.4.1-p2ih2b");
 });
