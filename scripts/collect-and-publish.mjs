@@ -76,8 +76,8 @@ function runKey(run) {
   return run.modelRunAt.replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
 }
 
-async function assertNoSuccessfulArtifact(run) {
-  if (process.env.GITHUB_ACTIONS !== "true") return;
+async function alreadyCollectedArtifact(run) {
+  if (process.env.GITHUB_ACTIONS !== "true") return false;
   const token = process.env.GITHUB_TOKEN;
   const repository = process.env.GITHUB_REPOSITORY;
   if (!token || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository || "")) {
@@ -109,9 +109,10 @@ async function assertNoSuccessfulArtifact(run) {
     const trustedEvent = new Set(["workflow_dispatch", "schedule"]).has(previousRun.event);
     if (previousRun.repository?.full_name === repository && previousRun.head_branch === "main"
         && trustedWorkflow && trustedEvent) {
-      throw new Error("GFS_RUN_ALREADY_COLLECTED");
+      return true;
     }
   }
+  return false;
 }
 
 async function collectDataset(run) {
@@ -169,16 +170,27 @@ try {
     store,
     discoverRun: async () => {
       discoveredRun = await discoverRun();
-      await assertNoSuccessfulArtifact(discoveredRun);
+      if (await alreadyCollectedArtifact(discoveredRun)) throw new Error("GFS_RUN_ALREADY_COLLECTED");
       return discoveredRun;
     },
     collectDataset
   });
   await preserveEvidence({ status: "SUCCESS", result });
   if (process.env.GITHUB_OUTPUT && discoveredRun) {
-    await appendFile(process.env.GITHUB_OUTPUT, `model_run_key=${runKey(discoveredRun)}\n`, "utf8");
+    await appendFile(process.env.GITHUB_OUTPUT,
+      `model_run_key=${runKey(discoveredRun)}\ncollection_outcome=${result.status}\n`, "utf8");
   }
 } catch (error) {
+  if (error?.message === "GFS_RUN_ALREADY_COLLECTED" && discoveredRun) {
+    const result = { status: "UNCHANGED", modelRunAt: discoveredRun.modelRunAt,
+      publication: null, reason: "VERIFIED_ARTIFACT_ALREADY_EXISTS" };
+    await preserveEvidence({ status: "SUCCESS", result });
+    if (process.env.GITHUB_OUTPUT) {
+      await appendFile(process.env.GITHUB_OUTPUT,
+        `model_run_key=${runKey(discoveredRun)}\ncollection_outcome=UNCHANGED\n`, "utf8");
+    }
+  } else {
   const evidence = await preserveEvidence({ status: "FAILED", error });
   throw new Error(evidence.failureCode);
+  }
 }

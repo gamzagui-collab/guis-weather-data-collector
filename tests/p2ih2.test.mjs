@@ -22,7 +22,7 @@ test("combined manual pipeline isolates R2 credentials to publish after successf
   assert.match(beforePublish, /actions\/upload-artifact@v4/);
   assert.doesNotMatch(beforePublish, /secrets\.|R2_(?:ACCOUNT|ACCESS|SECRET|BUCKET)/);
   assert.match(publish, /needs: collect/);
-  assert.match(publish, /if: needs\.collect\.result == 'success'/);
+  assert.match(publish, /if: needs\.collect\.result == 'success' && needs\.collect\.outputs\.collection_outcome == 'PUBLISHED'/);
   assert.match(publish, /secrets\.R2_ACCESS_KEY_ID_V3/);
   assert.match(publish, /actions\/download-artifact@v4/);
   assert.match(publish, /verify-artifact\.mjs/);
@@ -59,6 +59,8 @@ test("collector preserves sanitized success and failure evidence before exiting"
   ]);
   assert.match(collector, /weather\.gfs\.collection-evidence\.v2/);
   assert.match(collector, /status: "FAILED"/);
+  assert.match(collector, /collection_outcome=UNCHANGED/);
+  assert.match(collector, /VERIFIED_ARTIFACT_ALREADY_EXISTS/);
   assert.match(collector, /failureCode: error \? failureCode\(error\) : null/);
   assert.doesNotMatch(operation, /ACCESS_KEY|SECRET_ACCESS_KEY|GITHUB_TOKEN/);
   assert.match(summary, /attempt started:/);

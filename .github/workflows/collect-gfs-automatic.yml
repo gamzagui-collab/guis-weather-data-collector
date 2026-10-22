@@ -18,6 +18,7 @@ jobs:
     outputs:
       artifact_name: ${{ steps.identity.outputs.artifact_name }}
       model_run_key: ${{ steps.collect.outputs.model_run_key }}
+      collection_outcome: ${{ steps.collect.outputs.collection_outcome }}
     env:
       GFS_COLLECTION_MODE: "48H"
       GFS_FORECAST_HOURS: "1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48"
@@ -41,14 +42,17 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/collect-and-publish.mjs --live --local
       - name: Build verified publication artifact
+        if: steps.collect.outputs.collection_outcome == 'PUBLISHED'
         env:
           GFS_ARTIFACT_ROOT: artifact-package
         run: node scripts/create-artifact.mjs --verified-local-store .mock-r2
       - name: Define immutable artifact identity
+        if: steps.collect.outputs.collection_outcome == 'PUBLISHED'
         id: identity
         shell: bash
         run: echo "artifact_name=gfs-48h-${{ steps.collect.outputs.model_run_key }}" >> "$GITHUB_OUTPUT"
       - name: Upload verified collector artifact
+        if: steps.collect.outputs.collection_outcome == 'PUBLISHED'
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.identity.outputs.artifact_name }}
@@ -79,7 +83,7 @@ jobs:
 
   publish:
     needs: collect
-    if: needs.collect.result == 'success'
+    if: needs.collect.result == 'success' && needs.collect.outputs.collection_outcome == 'PUBLISHED'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
