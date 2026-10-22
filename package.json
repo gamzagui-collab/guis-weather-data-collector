@@ -1,0 +1,15 @@
+{
+  "name": "guis-weather-data-collector",
+  "version": "0.1.0-p2id",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22",
+    "python": ">=3.12"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "simulate": "node scripts/simulate-publication.mjs",
+    "collect:local": "node scripts/collect-and-publish.mjs --local"
+  }
+}

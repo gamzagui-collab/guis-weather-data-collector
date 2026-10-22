@@ -1,0 +1,8 @@
+.work/
+.mock-r2/
+*.grib2
+*.tmp
+.env
+.env.*
+!.env.example
+__pycache__/
