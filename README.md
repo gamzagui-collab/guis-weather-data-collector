@@ -4,9 +4,12 @@ This repository collects official NOAA/NCEP GFS 0.25 degree
 surface APCP GRIB2, decodes it with ecCodes, verifies its time/unit/grid
 contract, and publishes immutable JSON shards.
 
-The current P2-I-E pilot is intentionally manual-only:
+The current P2-I-E-1 pilot is intentionally manual-only and split into three
+independent workflows:
 
-- `.github/workflows/collect-gfs.yml` exposes only `workflow_dispatch`;
+- `.github/workflows/r2-preflight.yml` performs a private canary put/head/get/hash/delete test without NOAA access;
+- `.github/workflows/collect-gfs.yml` collects and validates NOAA data, then stores a three-day GitHub Actions artifact without R2 credentials;
+- `.github/workflows/publish-gfs.yml` accepts only a successful `collect-gfs.yml` run from this repository's `main`, revalidates its artifact, and publishes it without NOAA access;
 - no `schedule`, `pull_request`, or untrusted code execution trigger exists;
 - the pilot permits exactly f001, f003, f006, and f012;
 - one completed-cycle availability probe plus four GRIB downloads are capped at five upstream requests and
@@ -37,6 +40,13 @@ with a temporary file and rename.
 accumulation end. Therefore the official f012 PT12H and f012 PT6H records remain
 distinct even though they have the same `validAt`.
 
+The collector artifact records its repository, branch, commit, workflow run ID,
+object allowlist, byte lengths, and SHA-256 values. The publisher checks the
+source GitHub workflow identity and success state before downloading it. A
+publication retry reuses the same short-lived artifact and does not contact
+NOAA again. Artifacts are transport for a single publish attempt, not a weather
+data store.
+
 ## Object-store boundary
 
 `src/publisher.mjs` depends only on this minimal object-store interface:
@@ -48,8 +58,9 @@ distinct even though they have the same `validAt`.
 
 `LocalObjectStore` is the tested mock. `scripts/publish-r2.mjs` uses the R2
 S3-compatible endpoint only after explicit `--execute`; it checks every local
-hash, uploads immutable objects first, checks remote byte length and SHA-256
-metadata, and uploads `latest.json` last. Credentials must be scoped to the
+hash, uploads immutable objects first, downloads every object to verify its
+actual byte length and SHA-256, rejects a latest-pointer time regression, and
+uploads `latest.json` last. Credentials must be scoped to the
 single Preview bucket. Listing/deletion can be omitted from the collection
 credential and granted only to a separately reviewed retention job.
 

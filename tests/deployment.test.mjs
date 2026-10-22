@@ -66,6 +66,8 @@ export function fixture(modelRunAt = "2026-10-22T06:00:00Z") {
     grid: { type: "regular_ll", Ni: 4, Nj: 1, resolutionDegrees: 0.25, points },
     frames: [
       frame(1, 0, 1, "PT1H", hash("a")),
+      frame(3, 0, 3, "PT3H", hash("e")),
+      frame(6, 0, 6, "PT6H", hash("f")),
       frame(12, 0, 12, "PT12H", hash("c")),
       frame(12, 6, 12, "PT6H", hash("d"))
     ],
@@ -84,7 +86,7 @@ test("run is sharded into the specified R2 layout and f012 contracts remain inde
   const plan = buildRunObjects(fixture());
   assert.equal(plan.gridObject.key, `runs/${plan.runId}/grid.json`);
   assert.equal(plan.manifestObject.key, `runs/${plan.runId}/manifest.json`);
-  assert.equal(plan.forecastObjects.length, 3);
+  assert.equal(plan.forecastObjects.length, 5);
   const twelve = plan.forecastObjects.filter((item) => item.forecastHour === 12);
   assert.equal(twelve.length, 2);
   assert.notEqual(twelve[0].frameId, twelve[1].frameId);
@@ -105,7 +107,7 @@ test("publisher verifies shards and writes latest.json last", async () => {
     await publishDataset(tracking, fixture());
     assert.equal(writes.at(-1), "latest.json");
     const result = await readLatestPublication(holder.store);
-    assert.equal(result.manifest.objectCount, 4);
+    assert.equal(result.manifest.objectCount, 6);
   } finally { await holder.close(); }
 });
 
@@ -172,7 +174,7 @@ test("adapter selects official nearest grids for multiple Korean sites without i
     for (const [latitude, longitude] of sites) {
       const result = await readGfsForLocation(holder.store, { enabled: true, latitude, longitude, now: new Date("2026-10-22T12:00:00Z") });
       assert.equal(result.status, "AVAILABLE");
-      assert.equal(result.values.length, 3);
+      assert.equal(result.values.length, 5);
       assert.ok(result.gridPoint.distanceKm >= 0);
       assert.equal(result.values[0].spatialProcessing, "NEAREST_GRID_POINT_NO_INTERPOLATION");
     }
@@ -202,7 +204,7 @@ test("actual zero, missing, PT6H and PT12H remain distinct in adapter output", a
     const missing = await readGfsForLocation(holder.store, { enabled: true, latitude: 35.25, longitude: 129, now: new Date("2026-10-22T12:00:00Z") });
     assert.equal(missing.values[0].status, "MISSING");
     assert.equal(missing.values[0].quantitativeValue, null);
-    assert.deepEqual(new Set(zero.values.slice(1).map((value) => value.accumulationPeriod)), new Set(["PT12H", "PT6H"]));
+    assert.deepEqual(new Set(zero.values.filter((value) => value.frameId.startsWith("f012-")).map((value) => value.accumulationPeriod)), new Set(["PT12H", "PT6H"]));
   } finally { await holder.close(); }
 });
 
@@ -265,7 +267,7 @@ test("latest run must publish the configured final forecast index before downloa
   assert.equal(await verifyRunComplete(run, 120, missingBudget, async () => ({ status: 404 })), false);
 });
 
-test("collector package is standalone and pilot workflow is manual-only and serialized", async () => {
+test("collector package is standalone and collection workflow is manual-only and credential-free", async () => {
   const workflow = await readFile(join(here, "../.github/workflows/collect-gfs.yml"), "utf8");
   const sourceFiles = ["contracts.mjs", "object-store.mjs", "publisher.mjs", "adapter.mjs", "retention.mjs", "workflow.mjs", "noaa.mjs"];
   for (const file of sourceFiles) {
@@ -279,9 +281,9 @@ test("collector package is standalone and pilot workflow is manual-only and seri
   assert.match(workflow, /GFS_PILOT_MODE: "true"/);
   assert.match(workflow, /GFS_FORECAST_HOURS: "1,3,6,12"/);
   assert.match(workflow, /GFS_MAX_DOWNLOAD_BYTES: "15728640"/);
-  assert.match(workflow, /R2_BUCKET: guis-weather-gfs-preview/);
-  assert.match(workflow, /secrets\.R2_ACCESS_KEY_ID_V3/);
-  assert.match(workflow, /secrets\.R2_SECRET_ACCESS_KEY_V3/);
+  assert.match(workflow, /actions\/upload-artifact@v4/);
+  assert.match(workflow, /retention-days: 3/);
+  assert.doesNotMatch(workflow, /R2_|secrets\./);
   assert.ok(workflow.endsWith("\n"));
 });
 
@@ -304,7 +306,7 @@ test("R2 uploader is fail-closed and uploads latest last", async () => {
   assert.match(source, /R2_REMOTE_EXECUTION_FLAG_REQUIRED/);
   assert.match(source, /ordered = \[\.\.\.descriptors/);
   assert.match(source, /LATEST_KEY\]/);
-  assert.match(source, /R2_REMOTE_INTEGRITY_FAILED/);
+  assert.match(source, /R2_REMOTE_(?:HEAD|BODY)_INTEGRITY_FAILED/);
   assert.doesNotMatch(source, /console\.log\(process\.env|SECRET_ACCESS_KEY.*stdout/);
 });
 

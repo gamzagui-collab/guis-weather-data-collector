@@ -98,7 +98,7 @@ export async function publishDataset(store, dataset, { now = new Date(), beforeL
     return {
       runId: plan.runId,
       latest: plan.latest,
-      objectCount: plan.manifest.objectCount + 2,
+      objectCount: plan.manifest.objectCount + 3,
       runBytes: plan.gridObject.bytes + plan.forecastObjects.reduce((sum, item) => sum + item.bytes, 0) + plan.manifestObject.bytes,
       manifestSha256: plan.manifestObject.sha256
     };

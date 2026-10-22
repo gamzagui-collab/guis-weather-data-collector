@@ -10,6 +10,7 @@
   "scripts": {
     "test": "node --test tests/*.test.mjs",
     "simulate": "node scripts/simulate-publication.mjs",
-    "collect:local": "node scripts/collect-and-publish.mjs --local"
+    "collect:local": "node scripts/collect-and-publish.mjs --local",
+    "artifact:verify": "node scripts/verify-artifact.mjs"
   }
 }

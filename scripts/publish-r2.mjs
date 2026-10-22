@@ -1,21 +1,16 @@
-import { spawn } from "node:child_process";
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { LocalObjectStore } from "../src/object-store.mjs";
 import { parseJson, sha256 } from "../src/contracts.mjs";
 import { LATEST_KEY, STATUS_KEY, readLatestPublication } from "../src/publisher.mjs";
+import { r2Args, runAws, verifiedR2Environment } from "../src/r2-cli.mjs";
 
 if (!process.argv.includes("--execute")) throw new Error("R2_REMOTE_EXECUTION_FLAG_REQUIRED");
 const index = process.argv.indexOf("--verified-local-store");
 if (index < 0 || !process.argv[index + 1]) throw new Error("R2_LOCAL_STORE_REQUIRED");
 const localRoot = resolve(process.argv[index + 1]);
-const accountId = process.env.R2_ACCOUNT_ID;
-const bucket = process.env.R2_BUCKET;
-if (!/^[a-f0-9]{32}$/.test(accountId || "") || !/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(bucket || "")) {
-  throw new Error("R2_TARGET_CONFIGURATION_INVALID");
-}
-if (!process.env.R2_ACCESS_KEY_ID || !process.env.R2_SECRET_ACCESS_KEY) throw new Error("R2_CREDENTIALS_MISSING");
-const endpoint = `https://${accountId}.r2.cloudflarestorage.com`;
+verifiedR2Environment();
 const store = new LocalObjectStore(localRoot);
 const { latest, manifest } = await readLatestPublication(store);
 
@@ -26,36 +21,35 @@ for (const descriptor of descriptors) {
 }
 const status = await store.tryGet(STATUS_KEY);
 const ordered = [...descriptors.map((item) => item.key), ...(status ? [STATUS_KEY] : []), LATEST_KEY];
+const temporary = await mkdtemp(join(tmpdir(), "gfs-r2-publish-"));
 
-function aws(args) {
-  return new Promise((resolvePromise, rejectPromise) => {
-    const child = spawn("aws", args, {
-      windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"],
-      env: {
-        ...process.env,
-        AWS_ACCESS_KEY_ID: process.env.R2_ACCESS_KEY_ID,
-        AWS_SECRET_ACCESS_KEY: process.env.R2_SECRET_ACCESS_KEY,
-        AWS_DEFAULT_REGION: "auto",
-        AWS_EC2_METADATA_DISABLED: "true"
-      }
-    });
-    let stdout = "", stderr = "";
-    child.stdout.on("data", (chunk) => { stdout += chunk; });
-    child.stderr.on("data", (chunk) => { stderr += chunk; });
-    child.on("error", rejectPromise);
-    child.on("close", (code) => code === 0 ? resolvePromise(stdout) : rejectPromise(new Error(`R2_AWS_CLI_EXIT_${code}:${stderr.slice(0, 240)}`)));
-  });
+async function remoteJson(key, name) {
+  const target = join(temporary, name);
+  const result = await runAws(r2Args("get-object", ["--key", key, target]), { allowFailure: true });
+  if (result.code !== 0 && result.failureKind === "NOT_FOUND") return null;
+  if (result.code !== 0) throw new Error("R2_EXISTING_LATEST_READ_FAILED");
+  return parseJson(await readFile(target));
 }
 
-for (const key of ordered) {
-  const localPath = store.path(key);
-  const body = await readFile(localPath);
-  const digest = sha256(body);
-  await aws(["s3api", "put-object", "--endpoint-url", endpoint, "--bucket", bucket, "--key", key,
-    "--body", localPath, "--content-type", "application/json", "--metadata", `sha256=${digest}`]);
-  const remote = parseJson(Buffer.from(await aws(["s3api", "head-object", "--endpoint-url", endpoint, "--bucket", bucket, "--key", key])));
-  if (Number(remote.ContentLength) !== body.byteLength || remote.Metadata?.sha256 !== digest) throw new Error("R2_REMOTE_INTEGRITY_FAILED");
+try {
+  const current = await remoteJson(LATEST_KEY, "current-latest.json");
+  if (current && Date.parse(current.modelRunAt) > Date.parse(latest.modelRunAt)) throw new Error("R2_LATEST_REGRESSION_BLOCKED");
+  for (let index = 0; index < ordered.length; index += 1) {
+    const key = ordered[index];
+    const localPath = store.path(key);
+    const body = await readFile(localPath);
+    const digest = sha256(body);
+    await runAws(r2Args("put-object", ["--key", key, "--body", localPath,
+      "--content-type", "application/json", "--metadata", `sha256=${digest}`]));
+    const remote = parseJson(Buffer.from((await runAws(r2Args("head-object", ["--key", key]))).stdout));
+    if (Number(remote.ContentLength) !== body.byteLength || remote.Metadata?.sha256 !== digest) throw new Error("R2_REMOTE_HEAD_INTEGRITY_FAILED");
+    const downloaded = join(temporary, `object-${index}.json`);
+    await runAws(r2Args("get-object", ["--key", key, downloaded]));
+    const remoteBody = await readFile(downloaded);
+    if (remoteBody.byteLength !== body.byteLength || sha256(remoteBody) !== digest) throw new Error("R2_REMOTE_BODY_INTEGRITY_FAILED");
+    parseJson(remoteBody, "R2_REMOTE_JSON_INVALID");
+  }
+  process.stdout.write(`${JSON.stringify({ status: "PUBLISHED", runId: latest.runId, objectCount: ordered.length, manifestSha256: latest.manifest.sha256 })}\n`);
+} finally {
+  await rm(temporary, { recursive: true, force: true });
 }
-
-process.stdout.write(`${JSON.stringify({ status: "PUBLISHED", runId: latest.runId, objectCount: ordered.length })}\n`);
