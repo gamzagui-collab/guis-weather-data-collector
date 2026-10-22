@@ -9,7 +9,7 @@ The current P2-I-E pilot is intentionally manual-only:
 - `.github/workflows/collect-gfs.yml` exposes only `workflow_dispatch`;
 - no `schedule`, `pull_request`, or untrusted code execution trigger exists;
 - the pilot permits exactly f001, f003, f006, and f012;
-- NOAA discovery plus GRIB downloads are capped at six upstream requests and
+- one completed-cycle availability probe plus four GRIB downloads are capped at five upstream requests and
   15 MiB, with a minimum ten-second interval;
 - GFS data is written only to the private Preview bucket named
   `guis-weather-gfs-preview`;
@@ -73,8 +73,9 @@ the object-store budget. A failed collection leaves the previous latest run
 unchanged and records a sanitized failure code. It must never relabel the old
 run as current.
 
-Before GRIB downloads start, the collector performs a HEAD check for the
-configured final forecast-hour `.idx` file. A newly created but incomplete NOAA
+Before GRIB downloads start, the collector performs a one-byte ranged GET for the
+configured final forecast-hour `.idx` file because NOMADS does not document HEAD as
+an automation contract. A newly created but incomplete NOAA
 run is rejected as `GFS_LATEST_RUN_NOT_COMPLETE`; the prior published run stays
 visible with its original timestamps. In GitHub Actions the forecast-hour list
 is mandatory and has no silent four-frame fallback.
