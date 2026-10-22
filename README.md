@@ -10,12 +10,16 @@ every accumulation contract and source-shard SHA-256 while allowing a site
 query to read one tile instead of all forecast shards. Source forecast objects
 and the root run manifest remain immutable.
 
-The P2-I-G 48-hour validation remains intentionally manual-only and split into three
-independent workflows:
+The P2-I-H-2 pipeline keeps the recovery workflows and adds a combined
+collect-to-publish workflow. Until its manual end-to-end run succeeds,
+`.github/workflows/collect-gfs-automatic.yml` is `workflow_dispatch` only and
+the schedule remains disabled.
+
+Independent recovery workflows remain available:
 
 - `.github/workflows/r2-preflight.yml` performs a private canary put/head/get/hash/delete test without NOAA access;
 - `.github/workflows/collect-gfs.yml` collects and validates NOAA data, then stores a three-day GitHub Actions artifact without R2 credentials;
-- `.github/workflows/publish-gfs.yml` accepts only a successful `collect-gfs.yml` run from this repository's `main`, revalidates its artifact, and publishes it without NOAA access;
+- `.github/workflows/publish-gfs.yml` accepts a verified artifact only when the trusted main-branch run's `collect` job succeeded, including recovery from a combined workflow whose later publish job failed; it revalidates and publishes without NOAA access;
 - no `schedule`, `pull_request`, or untrusted code execution trigger exists;
 - the manual collector requires every official forecast file from f001 through f048;
 - run discovery and 48 GRIB downloads are capped at 55 upstream requests and
@@ -23,6 +27,14 @@ independent workflows:
 - GFS data is written only to the private Preview bucket named
   `guis-weather-gfs-preview`;
 - public Weather GFS remains disabled.
+
+The combined workflow has two jobs. `collect` receives no R2 credentials and
+uploads a three-day verified artifact. `publish` starts only after `collect`
+succeeds, receives the bucket-scoped credentials, downloads the same-run
+artifact, revalidates provenance and hashes, publishes the generated 8 x 8
+tile index, and changes `latest.json` last. A failed publish can be recovered
+from the verified artifact with the manual publisher without another NOAA
+collection.
 
 ## Publication contract
 
@@ -103,6 +115,26 @@ the last successful run, consecutive failures, `latest.json.modelRunAt`, and
 the object-store budget. A failed collection leaves the previous latest run
 unchanged and records a sanitized failure code. It must never relabel the old
 run as current.
+
+The active combined workflow is deliberately kept manual until one complete
+manual collect-to-publish run succeeds against a newer official model run.
+After that checkpoint its approved schedule is 05:37, 11:37, 17:37 and 23:37
+UTC. The off-hour minute reduces GitHub's documented top-of-hour scheduling
+load risk. The disabled schedule monitor checks for an attempt gap over eight
+hours, a success gap over fourteen hours, and two consecutive failures.
+
+Freshness has three operational states independent from precipitation values:
+
+- `FRESH`: a recent successful collection and model run;
+- `DELAYED`: an attempt/success is over eight hours old, the model run is over
+  fourteen hours old, or a recent collection failed;
+- `STALE`: the forecast valid period expired, the last success is over fourteen
+  hours old, or the model run is over twenty hours old.
+
+GitHub run history and the short-lived sanitized operation artifact preserve
+attempt/failure evidence even when collection fails before publishing. R2
+`status/collector.json` describes the most recently verified collection and
+`latest.json` remains the authoritative published pointer.
 
 Before GRIB downloads start, the collector performs a one-byte ranged GET for the
 configured final forecast-hour `.idx` file because NOMADS does not document HEAD as

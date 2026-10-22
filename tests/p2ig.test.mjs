@@ -106,7 +106,7 @@ test("collector uses fatal coverage validation and sanitized collection evidence
   const analyzer = await readFile(join(here, "../python/analyze_gfs_grid.py"), "utf8");
   assert.match(script, /GFS_NO_COMPLETE_48H_RUN_WITHIN_BUDGET/);
   assert.match(script, /--expected-forecast-hours/);
-  assert.match(script, /weather\.gfs\.collection-evidence\.v1/);
+  assert.match(script, /weather\.gfs\.collection-evidence\.v2/);
   assert.match(script, /GFS_RUN_ALREADY_COLLECTED/);
   assert.match(script, /GFS_MAX_DOWNLOAD_BYTES_INVALID/);
   assert.doesNotMatch(script, /ACCESS_KEY|SECRET_ACCESS_KEY/);

@@ -102,7 +102,13 @@ async function assertNoSuccessfulArtifact(run) {
     });
     if (runResponse.status !== 200) throw new Error(`GFS_GITHUB_RUN_LOOKUP_HTTP_${runResponse.status}`);
     const previousRun = await runResponse.json();
-    if (previousRun.status === "completed" && previousRun.conclusion === "success") {
+    const trustedWorkflow = new Set([
+      ".github/workflows/collect-gfs.yml",
+      ".github/workflows/collect-gfs-automatic.yml"
+    ]).has(String(previousRun.path || "").split("@")[0]);
+    const trustedEvent = new Set(["workflow_dispatch", "schedule"]).has(previousRun.event);
+    if (previousRun.repository?.full_name === repository && previousRun.head_branch === "main"
+        && trustedWorkflow && trustedEvent) {
       throw new Error("GFS_RUN_ALREADY_COLLECTED");
     }
   }
@@ -128,26 +134,51 @@ async function collectDataset(run) {
   return JSON.parse(await readFile(output, "utf8"));
 }
 
+const attemptStartedAt = new Date().toISOString();
 let discoveredRun;
-const result = await runCollectorWorkflow({
-  store,
-  discoverRun: async () => {
-    discoveredRun = await discoverRun();
-    await assertNoSuccessfulArtifact(discoveredRun);
-    return discoveredRun;
-  },
-  collectDataset
-});
-const evidence = {
-  schemaVersion: "weather.gfs.collection-evidence.v1",
-  generatedAt: new Date().toISOString(),
-  collectionMode,
-  forecastHours: requestedHours,
-  result,
-  budget: budget.snapshot()
-};
-await writeFile(resolve(storeRoot, "collection-evidence.json"), `${JSON.stringify(evidence, null, 2)}\n`, "utf8");
-if (process.env.GITHUB_OUTPUT && discoveredRun) {
-  await appendFile(process.env.GITHUB_OUTPUT, `model_run_key=${runKey(discoveredRun)}\n`, "utf8");
+
+function failureCode(error) {
+  const code = String(error?.message || "GFS_COLLECTION_FAILED").split(":", 1)[0];
+  return /^[A-Z0-9_]{3,120}$/.test(code) ? code : "GFS_COLLECTION_FAILED";
 }
-process.stdout.write(`${JSON.stringify(evidence, null, 2)}\n`);
+
+async function preserveEvidence({ status, result = null, error = null }) {
+  const evidence = {
+    schemaVersion: "weather.gfs.collection-evidence.v2",
+    status,
+    attemptStartedAt,
+    attemptCompletedAt: new Date().toISOString(),
+    eventName: process.env.GITHUB_EVENT_NAME || "LOCAL",
+    workflowRunId: process.env.GITHUB_RUN_ID || null,
+    workflowRunAttempt: process.env.GITHUB_RUN_ATTEMPT || null,
+    collectionMode,
+    forecastHours: requestedHours,
+    modelRunAt: discoveredRun?.modelRunAt || null,
+    result,
+    budget: budget.snapshot(),
+    failureCode: error ? failureCode(error) : null
+  };
+  await mkdir(storeRoot, { recursive: true });
+  await writeFile(resolve(storeRoot, "collection-evidence.json"), `${JSON.stringify(evidence, null, 2)}\n`, "utf8");
+  process.stdout.write(`${JSON.stringify(evidence, null, 2)}\n`);
+  return evidence;
+}
+
+try {
+  const result = await runCollectorWorkflow({
+    store,
+    discoverRun: async () => {
+      discoveredRun = await discoverRun();
+      await assertNoSuccessfulArtifact(discoveredRun);
+      return discoveredRun;
+    },
+    collectDataset
+  });
+  await preserveEvidence({ status: "SUCCESS", result });
+  if (process.env.GITHUB_OUTPUT && discoveredRun) {
+    await appendFile(process.env.GITHUB_OUTPUT, `model_run_key=${runKey(discoveredRun)}\n`, "utf8");
+  }
+} catch (error) {
+  const evidence = await preserveEvidence({ status: "FAILED", error });
+  throw new Error(evidence.failureCode);
+}

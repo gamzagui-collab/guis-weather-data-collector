@@ -13,7 +13,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: guis-weather-gfs-r2-publisher
+  group: guis-weather-gfs-collector-48h
   cancel-in-progress: false
 
 jobs:
@@ -40,9 +40,13 @@ jobs:
             }
             const { owner, repo } = context.repo;
             const { data: run } = await github.rest.actions.getWorkflowRun({ owner, repo, run_id: runId });
-            const validPath = String(run.path || "").split("@")[0] === ".github/workflows/collect-gfs.yml";
-            if (run.repository?.full_name !== `${owner}/${repo}` || run.event !== "workflow_dispatch" ||
-                run.head_branch !== "main" || run.status !== "completed" || run.conclusion !== "success" || !validPath) {
+            const workflowPath = String(run.path || "").split("@")[0];
+            const validPath = [".github/workflows/collect-gfs.yml", ".github/workflows/collect-gfs-automatic.yml"].includes(workflowPath);
+            const validEvent = run.event === "workflow_dispatch" || (workflowPath.endsWith("collect-gfs-automatic.yml") && run.event === "schedule");
+            const { data: jobs } = await github.rest.actions.listJobsForWorkflowRun({ owner, repo, run_id: runId, per_page: 100 });
+            const collectSucceeded = jobs.jobs.some((job) => job.name === "collect" && job.conclusion === "success");
+            if (run.repository?.full_name !== `${owner}/${repo}` || !validEvent ||
+                run.head_branch !== "main" || run.status !== "completed" || !collectSucceeded || !validPath) {
               core.setFailed("COLLECT_WORKFLOW_IDENTITY_OR_OUTCOME_INVALID");
               return;
             }

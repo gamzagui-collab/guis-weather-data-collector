@@ -1,0 +1,45 @@
+# Intentionally disabled until the combined manual collect-to-publish E2E passes.
+name: Monitor GFS Schedule Freshness (DISABLED TEMPLATE)
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 2,8,14,20 * * *"
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: guis-weather-gfs-schedule-monitor
+  cancel-in-progress: true
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check collector attempts and consecutive failures
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const workflow_id = "collect-gfs-automatic.yml";
+            const { data } = await github.rest.actions.listWorkflowRuns({ owner, repo, workflow_id, per_page: 20 });
+            const completed = data.workflow_runs.filter((run) => run.status === "completed");
+            const lastAttempt = completed[0];
+            const lastSuccess = completed.find((run) => run.conclusion === "success");
+            const failures = completed.findIndex((run) => run.conclusion === "success");
+            const consecutiveFailures = failures < 0 ? completed.length : failures;
+            const now = Date.now();
+            const attemptAgeHours = lastAttempt ? (now - Date.parse(lastAttempt.created_at)) / 3600000 : Infinity;
+            const successAgeHours = lastSuccess ? (now - Date.parse(lastSuccess.updated_at)) / 3600000 : Infinity;
+            await core.summary.addHeading("GFS schedule monitor")
+              .addRaw(`Last attempt: ${lastAttempt?.created_at || "none"}\n`)
+              .addRaw(`Last success: ${lastSuccess?.updated_at || "none"}\n`)
+              .addRaw(`Consecutive failures: ${consecutiveFailures}\n`)
+              .addRaw(`Attempt age hours: ${attemptAgeHours.toFixed(2)}\n`)
+              .addRaw(`Success age hours: ${successAgeHours.toFixed(2)}\n`).write();
+            if (attemptAgeHours > 8) core.setFailed("GFS_SCHEDULE_ATTEMPT_MISSING");
+            else if (successAgeHours > 14) core.setFailed("GFS_LAST_SUCCESS_STALE");
+            else if (consecutiveFailures >= 2) core.setFailed("GFS_CONSECUTIVE_FAILURES");

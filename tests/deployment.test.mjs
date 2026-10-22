@@ -297,7 +297,7 @@ test("48-hour collector chooses only complete runs and emits sanitized evidence"
   const summary = await readFile(join(here, "../scripts/write-run-summary.mjs"), "utf8");
   assert.match(source, /const candidates = listPublishedRuns/);
   assert.match(source, /GFS_NO_COMPLETE_48H_RUN_WITHIN_BUDGET/);
-  assert.match(source, /weather\.gfs\.collection-evidence\.v1/);
+  assert.match(source, /weather\.gfs\.collection-evidence\.v2/);
   assert.match(source, /collection-evidence\.json/);
   assert.doesNotMatch(source, /ACCESS_KEY|SECRET_ACCESS_KEY/);
   assert.match(summary, /NOAA requests:/);

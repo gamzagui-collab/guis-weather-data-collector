@@ -13,13 +13,17 @@ const status = await safe("status/collector.json");
 const evidence = await safe("collection-evidence.json");
 const lines = [
   "## GFS collector",
-  `- status: ${status?.status || "NO_STATUS"}`,
-  `- run: ${latest?.modelRunAt || status?.attemptedRunId || "UNAVAILABLE"}`,
+  `- attempt status: ${evidence?.status || "NO_EVIDENCE"}`,
+  `- pipeline status: ${process.env.GFS_PIPELINE_STATUS || "UNAVAILABLE"}`,
+  `- attempt started: ${evidence?.attemptStartedAt || "UNAVAILABLE"}`,
+  `- attempt completed: ${evidence?.attemptCompletedAt || "UNAVAILABLE"}`,
+  `- collection status: ${status?.status || "NO_STATUS"}`,
+  `- run: ${latest?.modelRunAt || evidence?.modelRunAt || status?.attemptedRunId || "UNAVAILABLE"}`,
   `- latest valid time: ${latest?.latestValidAt || "UNAVAILABLE"}`,
   `- coverage: ${latest?.coverage?.label || "UNAVAILABLE"}`,
   `- NOAA requests: ${evidence?.budget?.requestsUsed ?? "UNAVAILABLE"}`,
   `- NOAA bytes: ${evidence?.budget?.bytesUsed ?? "UNAVAILABLE"}`,
-  `- failure code: ${status?.failureCode || "none"}`,
+  `- failure code: ${evidence?.failureCode || status?.failureCode || "none"}`,
   ""
 ];
 await appendFile(summary, lines.join("\n"), "utf8");

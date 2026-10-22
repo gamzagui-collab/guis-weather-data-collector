@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { appendFile, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { LocalObjectStore } from "../src/object-store.mjs";
@@ -72,8 +72,17 @@ try {
     if (remoteBody.byteLength !== body.byteLength || sha256(remoteBody) !== digest) throw new Error("R2_REMOTE_BODY_INTEGRITY_FAILED");
     parseJson(remoteBody, "R2_REMOTE_JSON_INVALID");
   }
-  process.stdout.write(`${JSON.stringify({ status: "PUBLISHED", runId: latest.runId, objectCount: ordered.length,
-    uploadedCount, reusedCount, manifestSha256: latest.manifest.sha256 })}\n`);
+  const latestBody = await store.get(LATEST_KEY);
+  const result = { status: "PUBLISHED", runId: latest.runId, modelRunAt: latest.modelRunAt,
+    latestValidAt: latest.latestValidAt, objectCount: ordered.length, uploadedCount, reusedCount,
+    manifestSha256: latest.manifest.sha256, latestSha256: sha256(latestBody) };
+  if (process.env.GITHUB_OUTPUT) {
+    await appendFile(process.env.GITHUB_OUTPUT,
+      `run_id=${result.runId}\nmodel_run_at=${result.modelRunAt}\nlatest_valid_at=${result.latestValidAt}\n`
+      + `object_count=${result.objectCount}\nuploaded_count=${result.uploadedCount}\nreused_count=${result.reusedCount}\n`
+      + `manifest_sha256=${result.manifestSha256}\nlatest_sha256=${result.latestSha256}\n`, "utf8");
+  }
+  process.stdout.write(`${JSON.stringify(result)}\n`);
 } finally {
   await rm(temporary, { recursive: true, force: true });
 }

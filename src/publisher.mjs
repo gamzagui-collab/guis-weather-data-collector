@@ -109,8 +109,13 @@ export async function publishDataset(store, dataset, { now = new Date(), beforeL
       schemaVersion: STATUS_SCHEMA,
       status: "SUCCESS",
       attemptedRunId: plan.runId,
+      modelRunAt: plan.latest.modelRunAt,
+      fetchedAt: plan.latest.fetchedAt,
+      latestValidAt: plan.latest.latestValidAt,
+      coverage: plan.latest.coverage,
       attemptedAt: startedAt,
       completedAt: new Date(now).toISOString(),
+      publicationState: "READY_TO_PUBLISH",
       failureCode: null
     });
     await store.put(STATUS_KEY, status.body, { atomic: true });
@@ -131,8 +136,13 @@ export async function publishDataset(store, dataset, { now = new Date(), beforeL
       schemaVersion: STATUS_SCHEMA,
       status: "FAILED",
       attemptedRunId: plan.runId,
+      modelRunAt: plan.latest.modelRunAt,
+      fetchedAt: plan.latest.fetchedAt,
+      latestValidAt: plan.latest.latestValidAt,
+      coverage: plan.latest.coverage,
       attemptedAt: startedAt,
       completedAt: new Date(now).toISOString(),
+      publicationState: "NOT_PUBLISHED",
       failureCode: String(error?.message || "GFS_COLLECTION_FAILED").slice(0, 120)
     });
     await store.put(STATUS_KEY, failure.body, { atomic: true });
