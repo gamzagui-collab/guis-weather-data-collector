@@ -1,0 +1,43 @@
+name: NOAA GFS Preview Pilot
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: guis-weather-gfs-collector-pilot
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GFS_PILOT_MODE: "true"
+      GFS_FORECAST_HOURS: "1,3,6,12"
+      GFS_MAX_DOWNLOAD_BYTES: "15728640"
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      R2_BUCKET: guis-weather-gfs-preview
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pinned ecCodes and R2 client
+        run: python -m pip install --disable-pip-version-check eccodes==2.44.0 awscli
+      - name: Verify collector contracts
+        run: npm test
+      - name: Collect bounded official NOAA pilot
+        run: node scripts/collect-and-publish.mjs --live --local
+      - name: Upload verified objects to private Preview R2
+        run: node scripts/publish-r2.mjs --execute --verified-local-store .mock-r2
+      - name: Write sanitized collection summary
+        if: always()
+        run: node scripts/write-run-summary.mjs
