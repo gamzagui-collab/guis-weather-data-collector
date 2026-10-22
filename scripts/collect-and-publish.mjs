@@ -1,12 +1,12 @@
 import { spawn } from "node:child_process";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { delimiter, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { LocalObjectStore } from "../src/object-store.mjs";
 import { runCollectorWorkflow } from "../src/workflow.mjs";
 import {
   DownloadBudget, KOREA_BOUNDS, NOMADS_PRODUCT_DIRECTORY, downloadFrame,
-  fetchText, parseCycles, parseRunDates, selectLatestRun, verifyRunComplete
+  fetchText, listPublishedRuns, parseCycles, parseRunDates, verifyRunComplete
 } from "../src/noaa.mjs";
 
 if (!process.argv.includes("--live")) throw new Error("GFS_LIVE_FLAG_REQUIRED");
@@ -15,17 +15,28 @@ if (!process.argv.includes("--local")) throw new Error("GFS_REMOTE_STORE_NOT_CON
 const packageRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const work = resolve(process.env.GFS_WORK_DIRECTORY || resolve(packageRoot, ".work"));
 const storeRoot = resolve(process.env.GFS_LOCAL_STORE || resolve(packageRoot, ".mock-r2"));
-const pilotMode = process.env.GFS_PILOT_MODE === "true";
 if (process.env.GITHUB_ACTIONS === "true" && !process.env.GFS_FORECAST_HOURS) throw new Error("GFS_PRODUCTION_FORECAST_HOURS_REQUIRED");
 const requestedHours = (process.env.GFS_FORECAST_HOURS || "1,3,6,12").split(",").map(Number);
 if (!requestedHours.length || requestedHours.some((hour) => !Number.isInteger(hour) || hour < 1 || hour > 384)) {
   throw new Error("GFS_FORECAST_HOURS_INVALID");
 }
-if (pilotMode && requestedHours.join(",") !== "1,3,6,12") throw new Error("GFS_PILOT_HOURS_INVALID");
-const maxRequests = pilotMode ? 5 : requestedHours.length + 3;
+const exact48Hours = Array.from({ length: 48 }, (_, index) => index + 1);
+const collectionMode = process.env.GFS_COLLECTION_MODE || "PILOT";
+if (!["PILOT", "48H"].includes(collectionMode)) throw new Error("GFS_COLLECTION_MODE_INVALID");
+if (collectionMode === "48H" && JSON.stringify(requestedHours) !== JSON.stringify(exact48Hours)) {
+  throw new Error("GFS_48H_FORECAST_HOURS_INVALID");
+}
+const maxRequests = Number(process.env.GFS_MAX_REQUESTS || requestedHours.length + 3);
+if (!Number.isInteger(maxRequests) || maxRequests < requestedHours.length + 3 || maxRequests > 55) {
+  throw new Error("GFS_MAX_REQUESTS_INVALID");
+}
+const maxBytes = Number(process.env.GFS_MAX_DOWNLOAD_BYTES || 64 * 1024 * 1024);
+if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || (collectionMode === "48H" && maxBytes > 15 * 1024 * 1024)) {
+  throw new Error("GFS_MAX_DOWNLOAD_BYTES_INVALID");
+}
 const budget = new DownloadBudget({
   maxRequests,
-  maxBytes: Number(process.env.GFS_MAX_DOWNLOAD_BYTES || 64 * 1024 * 1024)
+  maxBytes
 });
 const store = new LocalObjectStore(storeRoot);
 
@@ -44,27 +55,57 @@ function python(args) {
 }
 
 async function discoverRun() {
-  if (pilotMode) {
-    const now = new Date();
-    const cycleHour = Math.floor(now.getUTCHours() / 6) * 6;
-    const current = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), cycleHour));
-    const value = new Date(current.valueOf() - 6 * 3_600_000);
-    const run = {
-      runDate: `${value.getUTCFullYear()}${String(value.getUTCMonth() + 1).padStart(2, "0")}${String(value.getUTCDate()).padStart(2, "0")}`,
-      cycle: String(value.getUTCHours()).padStart(2, "0"),
-      modelRunAt: value.toISOString()
-    };
-    if (await verifyRunComplete(run, Math.max(...requestedHours), budget)) return run;
-    throw new Error("GFS_PILOT_RUN_NOT_COMPLETE");
-  }
   const product = await fetchText(NOMADS_PRODUCT_DIRECTORY, budget);
   const dates = parseRunDates(product);
   if (!dates.length) throw new Error("GFS_PRODUCT_DIRECTORY_EMPTY");
-  const latestDate = dates.at(-1);
-  const cyclesHtml = await fetchText(new URL(`gfs.${latestDate}/`, NOMADS_PRODUCT_DIRECTORY), budget);
-  const run = selectLatestRun([latestDate], { [latestDate]: parseCycles(cyclesHtml) });
-  if (!await verifyRunComplete(run, Math.max(...requestedHours), budget)) throw new Error("GFS_LATEST_RUN_NOT_COMPLETE");
-  return run;
+  const candidateDates = dates.slice(-2);
+  const cycles = {};
+  for (const runDate of candidateDates) {
+    const cyclesHtml = await fetchText(new URL(`gfs.${runDate}/`, NOMADS_PRODUCT_DIRECTORY), budget);
+    cycles[runDate] = parseCycles(cyclesHtml);
+  }
+  const candidates = listPublishedRuns(candidateDates, cycles).reverse();
+  for (const run of candidates) {
+    if (budget.requestsUsed >= maxRequests - requestedHours.length) break;
+    if (await verifyRunComplete(run, Math.max(...requestedHours), budget)) return run;
+  }
+  throw new Error("GFS_NO_COMPLETE_48H_RUN_WITHIN_BUDGET");
+}
+
+function runKey(run) {
+  return run.modelRunAt.replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
+}
+
+async function assertNoSuccessfulArtifact(run) {
+  if (process.env.GITHUB_ACTIONS !== "true") return;
+  const token = process.env.GITHUB_TOKEN;
+  const repository = process.env.GITHUB_REPOSITORY;
+  if (!token || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository || "")) {
+    throw new Error("GFS_GITHUB_DEDUP_CONFIGURATION_MISSING");
+  }
+  const artifactName = `gfs-48h-${runKey(run)}`;
+  const api = new URL(`https://api.github.com/repos/${repository}/actions/artifacts`);
+  api.searchParams.set("name", artifactName);
+  api.searchParams.set("per_page", "10");
+  const headers = {
+    Accept: "application/vnd.github+json",
+    Authorization: `Bearer ${token}`,
+    "X-GitHub-Api-Version": "2022-11-28"
+  };
+  const response = await fetch(api, { redirect: "manual", headers });
+  if (response.status !== 200) throw new Error(`GFS_GITHUB_ARTIFACT_LOOKUP_HTTP_${response.status}`);
+  const result = await response.json();
+  for (const artifact of result.artifacts || []) {
+    if (artifact.name !== artifactName || artifact.expired || !Number.isSafeInteger(artifact.workflow_run?.id)) continue;
+    const runResponse = await fetch(`https://api.github.com/repos/${repository}/actions/runs/${artifact.workflow_run.id}`, {
+      redirect: "manual", headers
+    });
+    if (runResponse.status !== 200) throw new Error(`GFS_GITHUB_RUN_LOOKUP_HTTP_${runResponse.status}`);
+    const previousRun = await runResponse.json();
+    if (previousRun.status === "completed" && previousRun.conclusion === "success") {
+      throw new Error("GFS_RUN_ALREADY_COLLECTED");
+    }
+  }
 }
 
 async function collectDataset(run) {
@@ -81,19 +122,32 @@ async function collectDataset(run) {
     resolve(packageRoot, "python/analyze_gfs_grid.py"), ...files,
     "--fetched-at", new Date().toISOString(),
     "--bounds", String(KOREA_BOUNDS.left), String(KOREA_BOUNDS.right), String(KOREA_BOUNDS.bottom), String(KOREA_BOUNDS.top),
+    "--expected-forecast-hours", requestedHours.join(","),
     "--output", output
   ]);
   return JSON.parse(await readFile(output, "utf8"));
 }
 
-const result = await runCollectorWorkflow({ store, discoverRun, collectDataset });
+let discoveredRun;
+const result = await runCollectorWorkflow({
+  store,
+  discoverRun: async () => {
+    discoveredRun = await discoverRun();
+    await assertNoSuccessfulArtifact(discoveredRun);
+    return discoveredRun;
+  },
+  collectDataset
+});
 const evidence = {
-  schemaVersion: "weather.gfs.pilot-evidence.v1",
+  schemaVersion: "weather.gfs.collection-evidence.v1",
   generatedAt: new Date().toISOString(),
-  pilotMode,
+  collectionMode,
   forecastHours: requestedHours,
   result,
   budget: budget.snapshot()
 };
-await writeFile(resolve(storeRoot, "pilot-evidence.json"), `${JSON.stringify(evidence, null, 2)}\n`, "utf8");
+await writeFile(resolve(storeRoot, "collection-evidence.json"), `${JSON.stringify(evidence, null, 2)}\n`, "utf8");
+if (process.env.GITHUB_OUTPUT && discoveredRun) {
+  await appendFile(process.env.GITHUB_OUTPUT, `model_run_key=${runKey(discoveredRun)}\n`, "utf8");
+}
 process.stdout.write(`${JSON.stringify(evidence, null, 2)}\n`);

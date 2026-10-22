@@ -10,6 +10,27 @@ export const STATUS_SCHEMA = "weather.gfs.collector-status.v1";
 const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$/;
 const SOURCE_UNITS = new Set(["kg m-2", "kg m**-2"]);
 
+export function validateCoverage(coverage) {
+  if (!coverage || coverage.kind !== "FORECAST_HOUR_SET" || !["48H", "CUSTOM"].includes(coverage.label)) {
+    throw new Error("GFS_COVERAGE_INVALID");
+  }
+  const expected = coverage.expectedForecastHours;
+  const collected = coverage.collectedForecastHours;
+  if (!Array.isArray(expected) || !expected.length || !Array.isArray(collected) || coverage.complete !== true) {
+    throw new Error("GFS_COVERAGE_INVALID");
+  }
+  const validList = (values) => values.every((hour, index) => Number.isInteger(hour) && hour >= 1 && hour <= 384 &&
+    (index === 0 || values[index - 1] < hour));
+  if (!validList(expected) || !validList(collected) || JSON.stringify(expected) !== JSON.stringify(collected) ||
+      coverage.startForecastHour !== expected[0] || coverage.endForecastHour !== expected.at(-1)) {
+    throw new Error("GFS_COVERAGE_INCOMPLETE");
+  }
+  if (coverage.label === "48H" && JSON.stringify(expected) !== JSON.stringify(Array.from({ length: 48 }, (_, index) => index + 1))) {
+    throw new Error("GFS_48H_COVERAGE_INVALID");
+  }
+  return coverage;
+}
+
 export function canonicalJson(value) {
   return `${JSON.stringify(value)}\n`;
 }
@@ -55,6 +76,7 @@ export function validateDataset(dataset) {
   if (dataset.publishedAt !== null) instant(dataset.publishedAt, "GFS_PUBLISHED_AT_INVALID");
   if (!SOURCE_UNITS.has(dataset.sourceUnit) || dataset.unit !== "mm") throw new Error("GFS_UNIT_INVALID");
   if (dataset.area?.name !== "Republic of Korea" || !dataset.area?.bounds) throw new Error("GFS_AREA_INVALID");
+  if (dataset.coverage !== undefined && dataset.coverage !== null) validateCoverage(dataset.coverage);
   if (dataset.grid?.type !== "regular_ll" || dataset.grid?.resolutionDegrees !== 0.25 || !Array.isArray(dataset.grid.points)) {
     throw new Error("GFS_GRID_INVALID");
   }
@@ -67,6 +89,7 @@ export function validateDataset(dataset) {
   }
   if (!points.size || !Array.isArray(dataset.frames) || !dataset.frames.length) throw new Error("GFS_DATA_EMPTY");
   const contracts = new Set();
+  const collectedHours = new Set();
   for (const frame of dataset.frames) {
     if (frame.modelRunAt !== dataset.modelRunAt) throw new Error("GFS_FRAME_RUN_MISMATCH");
     for (const field of ["validAt", "accumulationStart", "accumulationEnd"]) instant(frame[field], "GFS_FRAME_TIME_INVALID");
@@ -75,6 +98,7 @@ export function validateDataset(dataset) {
     if (!SOURCE_UNITS.has(frame.sourceUnit) || frame.unit !== "mm") throw new Error("GFS_FRAME_UNIT_INVALID");
     if (!/^[a-f0-9]{64}$/.test(frame.sourceDataSha256 || "")) throw new Error("GFS_SOURCE_HASH_INVALID");
     const id = frameId(frame);
+    collectedHours.add(frame.forecastHour);
     if (contracts.has(id)) throw new Error("GFS_FRAME_DUPLICATE");
     contracts.add(id);
     if (!Array.isArray(frame.values) || frame.values.length !== points.size) throw new Error("GFS_FRAME_GRID_LENGTH_MISMATCH");
@@ -90,6 +114,9 @@ export function validateDataset(dataset) {
         }
       } else throw new Error("GFS_VALUE_STATUS_INVALID");
     }
+  }
+  if (dataset.coverage && JSON.stringify([...collectedHours].sort((a, b) => a - b)) !== JSON.stringify(dataset.coverage.collectedForecastHours)) {
+    throw new Error("GFS_FRAME_COVERAGE_MISMATCH");
   }
   return dataset;
 }
@@ -110,7 +137,8 @@ export function splitDataset(dataset) {
     fetchedAt: dataset.fetchedAt,
     sourceUnit: dataset.sourceUnit,
     unit: dataset.unit,
-    area: dataset.area
+    area: dataset.area,
+    coverage: dataset.coverage ?? null
   };
   const grid = {
     schemaVersion: GRID_SCHEMA,

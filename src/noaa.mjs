@@ -48,14 +48,19 @@ export function parseCycles(html) {
 }
 
 export function selectLatestRun(dates, cycles, now = new Date()) {
+  const results = listPublishedRuns(dates, cycles, now);
+  if (!results.length) throw new Error("GFS_NO_PUBLISHED_RUN");
+  return results.at(-1);
+}
+
+export function listPublishedRuns(dates, cycles, now = new Date()) {
   const results = [];
   for (const runDate of dates) for (const cycle of cycles[runDate] || []) {
     const modelRunAt = new Date(`${runDate.slice(0, 4)}-${runDate.slice(4, 6)}-${runDate.slice(6, 8)}T${cycle}:00:00Z`);
     if (modelRunAt <= now) results.push({ runDate, cycle, modelRunAt: modelRunAt.toISOString() });
   }
   results.sort((a, b) => a.modelRunAt.localeCompare(b.modelRunAt));
-  if (!results.length) throw new Error("GFS_NO_PUBLISHED_RUN");
-  return results.at(-1);
+  return results;
 }
 
 export function buildFilterUrl({ runDate, cycle, forecastHour }) {

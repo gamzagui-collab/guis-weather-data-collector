@@ -47,6 +47,13 @@ jobs:
               return;
             }
             core.setOutput("head_sha", run.head_sha);
+            const { data: artifacts } = await github.rest.actions.listWorkflowRunArtifacts({ owner, repo, run_id: runId });
+            const matches = artifacts.artifacts.filter((item) => !item.expired && /^gfs-48h-\d{8}T\d{6}Z$/.test(item.name));
+            if (matches.length !== 1) {
+              core.setFailed("COLLECT_ARTIFACT_IDENTITY_INVALID");
+              return;
+            }
+            core.setOutput("artifact_name", matches[0].name);
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -58,7 +65,7 @@ jobs:
       - name: Download artifact from the approved collector run
         uses: actions/download-artifact@v4
         with:
-          name: gfs-pilot-${{ inputs.collect_run_id }}
+          name: ${{ steps.source.outputs.artifact_name }}
           path: artifact-package
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}

@@ -61,6 +61,7 @@ export function buildRunObjects(dataset) {
     modelRunAt: dataset.modelRunAt,
     fetchedAt: dataset.fetchedAt,
     latestValidAt,
+    coverage: dataset.coverage ?? null,
     manifest: { key: manifestObject.key, sha256: manifestObject.sha256, bytes: manifestObject.bytes }
   };
   return { runId, gridObject, forecastObjects, manifest, manifestObject, latest };

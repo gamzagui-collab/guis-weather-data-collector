@@ -209,7 +209,11 @@ test("actual zero, missing, PT6H and PT12H remain distinct in adapter output", a
 });
 
 test("KMA comparison and Heatmap accept only same-time verified PT1H mm", () => {
-  const base = { status: "AVAILABLE", validAt: "2026-10-22T07:00:00Z", accumulationPeriod: "PT1H", unit: "mm", quantitativeValue: 0 };
+  const base = {
+    status: "AVAILABLE", validAt: "2026-10-22T07:00:00Z", accumulationPeriod: "PT1H",
+    accumulationStart: "2026-10-22T06:00:00Z", accumulationEnd: "2026-10-22T07:00:00Z",
+    unit: "mm", quantitativeValue: 0
+  };
   assert.equal(assessKmaGfsComparison(base, { ...base, quantitativeValue: 1 }).comparable, true);
   assert.equal(assessKmaGfsComparison(base, { ...base, accumulationPeriod: "PT3H" }).code, "INCOMPATIBLE_ACCUMULATION");
   assert.equal(assessKmaGfsComparison(base, { ...base, validAt: "2026-10-22T08:00:00Z" }).code, "VALID_TIME_MISMATCH");
@@ -278,8 +282,9 @@ test("collector package is standalone and collection workflow is manual-only and
   assert.match(workflow, /contents: read/);
   assert.match(workflow, /workflow_dispatch:/);
   assert.doesNotMatch(workflow, /schedule:|pull_request:/);
-  assert.match(workflow, /GFS_PILOT_MODE: "true"/);
-  assert.match(workflow, /GFS_FORECAST_HOURS: "1,3,6,12"/);
+  assert.match(workflow, /GFS_COLLECTION_MODE: "48H"/);
+  assert.match(workflow, /GFS_FORECAST_HOURS: "1,2,3,[^"]*,48"/);
+  assert.match(workflow, /GFS_MAX_REQUESTS: "55"/);
   assert.match(workflow, /GFS_MAX_DOWNLOAD_BYTES: "15728640"/);
   assert.match(workflow, /actions\/upload-artifact@v4/);
   assert.match(workflow, /retention-days: 3/);
@@ -287,15 +292,13 @@ test("collector package is standalone and collection workflow is manual-only and
   assert.ok(workflow.endsWith("\n"));
 });
 
-test("pilot collector uses one completed-cycle probe plus four frames and emits sanitized evidence", async () => {
+test("48-hour collector chooses only complete runs and emits sanitized evidence", async () => {
   const source = await readFile(join(here, "../scripts/collect-and-publish.mjs"), "utf8");
   const summary = await readFile(join(here, "../scripts/write-run-summary.mjs"), "utf8");
-  assert.match(source, /const maxRequests = pilotMode \? 5/);
-  assert.match(source, /current\.valueOf\(\) - 6 \* 3_600_000/);
-  assert.doesNotMatch(source, /const candidates =/);
-  assert.match(source, /GFS_PILOT_RUN_NOT_COMPLETE/);
-  assert.match(source, /weather\.gfs\.pilot-evidence\.v1/);
-  assert.match(source, /pilot-evidence\.json/);
+  assert.match(source, /const candidates = listPublishedRuns/);
+  assert.match(source, /GFS_NO_COMPLETE_48H_RUN_WITHIN_BUDGET/);
+  assert.match(source, /weather\.gfs\.collection-evidence\.v1/);
+  assert.match(source, /collection-evidence\.json/);
   assert.doesNotMatch(source, /ACCESS_KEY|SECRET_ACCESS_KEY/);
   assert.match(summary, /NOAA requests:/);
   assert.match(summary, /NOAA bytes:/);

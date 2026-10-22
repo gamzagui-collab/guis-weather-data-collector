@@ -9,6 +9,7 @@ import argparse
 import hashlib
 import json
 import math
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -128,7 +129,14 @@ def decode_file(path):
     return frames, duplicates
 
 
-def build_dataset(paths, fetched_at, bounds):
+def forecast_hour_from_path(path):
+    match = re.search(r"-f(\d{3})\.grib2$", path.name)
+    if not match:
+        raise RuntimeError(f"Unrecognized forecast-hour filename: {path.name}")
+    return int(match.group(1))
+
+
+def build_dataset(paths, fetched_at, bounds, expected_forecast_hours=None):
     frames, duplicate_messages, grid, run = [], [], None, None
     for path in paths:
         decoded, duplicates = decode_file(path)
@@ -152,12 +160,27 @@ def build_dataset(paths, fetched_at, bounds):
     units = {item["sourceUnit"] for item in frames}
     if len(units) != 1:
         raise RuntimeError("Mixed source units")
+    source_file_hours = sorted({forecast_hour_from_path(path) for path in paths})
+    actual_hours = sorted({item["forecastHour"] for item in frames})
+    expected_hours = sorted(set(expected_forecast_hours or source_file_hours))
+    if source_file_hours != expected_hours or actual_hours != expected_hours:
+        raise RuntimeError("Incomplete forecast-hour coverage")
+    coverage = {
+        "kind": "FORECAST_HOUR_SET",
+        "label": "48H" if expected_hours == list(range(1, 49)) else "CUSTOM",
+        "startForecastHour": expected_hours[0],
+        "endForecastHour": expected_hours[-1],
+        "expectedForecastHours": expected_hours,
+        "collectedForecastHours": actual_hours,
+        "complete": True
+    }
     return {
         "schemaVersion": "weather.gfs.grid.v1", "provider": "NOAA/NCEP", "model": "GFS", "broker": None,
         "source": "NOAA/NCEP NOMADS", "sourceUrl": "https://nomads.ncep.noaa.gov/",
         "product": "GFS 0.25 degree GRIB2 surface APCP", "variable": "precipitation",
         "modelRunAt": run, "publishedAt": None, "fetchedAt": fetched_at, "sourceUnit": next(iter(units)), "unit": "mm",
-        "area": {"name": "Republic of Korea", "bounds": bounds}, "grid": grid, "frames": frames,
+        "area": {"name": "Republic of Korea", "bounds": bounds}, "coverage": coverage,
+        "grid": grid, "frames": frames,
         "duplicateMessagesRemoved": duplicate_messages, "missingForecastHours": [], "status": "AVAILABLE"
     }
 
@@ -168,12 +191,16 @@ def main():
     parser.add_argument("--fetched-at", required=True)
     parser.add_argument("--bounds", nargs=4, type=float, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--expected-forecast-hours", required=True)
     args = parser.parse_args()
     fetched = datetime.fromisoformat(args.fetched_at.replace("Z", "+00:00"))
     if fetched.tzinfo is None:
         raise RuntimeError("fetchedAt requires timezone")
     bounds = {"left": args.bounds[0], "right": args.bounds[1], "bottom": args.bounds[2], "top": args.bounds[3]}
-    dataset = build_dataset(args.files, iso(fetched.astimezone(timezone.utc)), bounds)
+    expected_hours = [int(item) for item in args.expected_forecast_hours.split(",") if item]
+    if not expected_hours or len(expected_hours) != len(set(expected_hours)):
+        raise RuntimeError("Invalid expected forecast hours")
+    dataset = build_dataset(args.files, iso(fetched.astimezone(timezone.utc)), bounds, expected_hours)
     encoded = json.dumps(dataset, ensure_ascii=False, separators=(",", ":")) + "\n"
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(encoded, encoding="utf-8")

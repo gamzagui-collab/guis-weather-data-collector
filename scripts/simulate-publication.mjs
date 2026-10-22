@@ -4,7 +4,8 @@ import { readGfsForLocation } from "../src/adapter.mjs";
 import { LocalObjectStore } from "../src/object-store.mjs";
 import { publishDataset } from "../src/publisher.mjs";
 
-const input = resolve(process.argv[2] || "../.local-tools/p2-i-c/evidence-backup/live/gfs-grid.json");
+if (!process.argv[2]) throw new Error("GFS_SIMULATION_INPUT_REQUIRED");
+const input = resolve(process.argv[2]);
 const output = resolve(process.argv[3] || ".mock-r2");
 if (process.argv.includes("--clean")) await rm(output, { recursive: true, force: true });
 const dataset = JSON.parse(await readFile(input, "utf8"));

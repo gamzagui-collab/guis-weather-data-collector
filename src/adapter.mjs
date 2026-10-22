@@ -119,11 +119,15 @@ export function assessKmaGfsComparison(kma, gfs) {
   if (kma.accumulationPeriod !== "PT1H" || gfs.accumulationPeriod !== "PT1H") {
     return { comparable: false, code: "INCOMPATIBLE_ACCUMULATION" };
   }
+  if (Date.parse(kma.accumulationStart || "") !== Date.parse(gfs.accumulationStart || "") ||
+      Date.parse(kma.accumulationEnd || "") !== Date.parse(gfs.accumulationEnd || "")) {
+    return { comparable: false, code: "ACCUMULATION_WINDOW_MISMATCH" };
+  }
   if (kma.unit !== "mm" || gfs.unit !== "mm") return { comparable: false, code: "UNIT_MISMATCH" };
   if (!Number.isFinite(kma.quantitativeValue) || !Number.isFinite(gfs.quantitativeValue)) {
     return { comparable: false, code: "NON_QUANTITATIVE_VALUE" };
   }
-  return { comparable: true, code: "SAME_VALID_TIME_PT1H_MM" };
+  return { comparable: true, code: "SAME_VALID_TIME_AND_WINDOW_PT1H_MM" };
 }
 
 export function isHeatmapEligible(value) {

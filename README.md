@@ -4,15 +4,15 @@ This repository collects official NOAA/NCEP GFS 0.25 degree
 surface APCP GRIB2, decodes it with ecCodes, verifies its time/unit/grid
 contract, and publishes immutable JSON shards.
 
-The current P2-I-E-1 pilot is intentionally manual-only and split into three
+The P2-I-G 48-hour validation remains intentionally manual-only and split into three
 independent workflows:
 
 - `.github/workflows/r2-preflight.yml` performs a private canary put/head/get/hash/delete test without NOAA access;
 - `.github/workflows/collect-gfs.yml` collects and validates NOAA data, then stores a three-day GitHub Actions artifact without R2 credentials;
 - `.github/workflows/publish-gfs.yml` accepts only a successful `collect-gfs.yml` run from this repository's `main`, revalidates its artifact, and publishes it without NOAA access;
 - no `schedule`, `pull_request`, or untrusted code execution trigger exists;
-- the pilot permits exactly f001, f003, f006, and f012;
-- one completed-cycle availability probe plus four GRIB downloads are capped at five upstream requests and
+- the manual collector requires every official forecast file from f001 through f048;
+- run discovery and 48 GRIB downloads are capped at 55 upstream requests and
   15 MiB, with a minimum ten-second interval;
 - GFS data is written only to the private Preview bucket named
   `guis-weather-gfs-preview`;
@@ -66,7 +66,9 @@ credential and granted only to a separately reviewed retention job.
 
 ## Scheduling and recovery
 
-The disabled template uses one concurrency group with
+`.github/workflows/collect-gfs.schedule.yml.disabled` contains the proposed
+05:37/11:37/17:37/23:37 UTC schedule. Its non-YAML extension is a deliberate
+hard stop: the schedule is not active. The disabled template uses one concurrency group with
 `cancel-in-progress: false`, so two collection jobs cannot publish the same run
 concurrently. The collector compares the discovered run with `latest.json` and
 returns `UNCHANGED` rather than downloading it again.
@@ -79,7 +81,10 @@ The future repository must monitor:
 - GitHub's automatic schedule disablement after 60 days of no public-repository
   activity.
 
-Recovery is a manual `workflow_dispatch` after checking NOAA publication and
+GitHub scheduled runs can be delayed, and schedules in public repositories may
+be disabled after 60 days without repository activity. Operations must monitor
+the last successful run, consecutive failures, `latest.json.modelRunAt`, and
+`latestValidAt`; recovery is a manual `workflow_dispatch` after checking NOAA publication and
 the object-store budget. A failed collection leaves the previous latest run
 unchanged and records a sanitized failure code. It must never relabel the old
 run as current.
@@ -93,7 +98,7 @@ is mandatory and has no silent four-frame fallback.
 
 ## Safe activation checklist
 
-1. Confirm the complete forecast-hour list and measure a full run.
+1. Confirm the complete f001-f048 forecast-hour list and measure a full run.
 2. Create a separate repository and make the reviewed branch its default.
 3. Create the Preview-only R2 subscription/bucket after approval.
 4. Implement and test the R2 adapter; keep `latest.json` as the final write.
