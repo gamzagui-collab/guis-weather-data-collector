@@ -42,6 +42,7 @@ test("publication state job validates R2 without passing R2 secrets to collector
   assert.match(publicationState, /secrets\.R2_SECRET_ACCESS_KEY_V3/);
   assert.doesNotMatch(collect, /secrets\.R2_SECRET_ACCESS_KEY_V3/);
   assert.match(collect, /GFS_PUBLISHED_MODEL_RUN_AT/);
+  assert.equal((collect.match(/^      artifact_name:/gm) || []).length, 1);
 });
 
 test("new complete run without artifact requires collection", () => {

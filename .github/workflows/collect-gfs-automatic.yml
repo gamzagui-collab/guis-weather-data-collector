@@ -45,7 +45,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     outputs:
-      artifact_name: ${{ steps.identity.outputs.artifact_name }}
       model_run_key: ${{ steps.collect.outputs.model_run_key }}
       collection_outcome: ${{ steps.collect.outputs.collection_outcome }}
       artifact_name: ${{ steps.collect.outputs.artifact_name || steps.identity.outputs.artifact_name }}
