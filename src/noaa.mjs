@@ -109,12 +109,13 @@ export async function fetchText(url, budget, fetchImpl = fetch) {
 export async function verifyRunComplete(run, finalForecastHour, budget, fetchImpl = fetch) {
   await budget.beforeRequest();
   const response = await fetchImpl(buildRawIndexUrl({ ...run, forecastHour: finalForecastHour }), {
-    method: "HEAD",
+    method: "GET",
     redirect: "manual",
-    headers: { Accept: "text/plain" }
+    headers: { Accept: "text/plain", Range: "bytes=0-0" }
   });
   if (response.status === 404) return false;
-  if (response.status !== 200) throw new Error(`GFS_INDEX_HTTP_${response.status}`);
+  if (response.status !== 200 && response.status !== 206) throw new Error(`GFS_INDEX_HTTP_${response.status}`);
+  await response.body?.cancel?.();
   return true;
 }
 
