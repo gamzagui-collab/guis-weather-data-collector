@@ -22,7 +22,7 @@ if (!requestedHours.length || requestedHours.some((hour) => !Number.isInteger(ho
   throw new Error("GFS_FORECAST_HOURS_INVALID");
 }
 if (pilotMode && requestedHours.join(",") !== "1,3,6,12") throw new Error("GFS_PILOT_HOURS_INVALID");
-const maxRequests = pilotMode ? 6 : requestedHours.length + 3;
+const maxRequests = pilotMode ? 5 : requestedHours.length + 3;
 const budget = new DownloadBudget({
   maxRequests,
   maxBytes: Number(process.env.GFS_MAX_DOWNLOAD_BYTES || 64 * 1024 * 1024)
@@ -48,15 +48,13 @@ async function discoverRun() {
     const now = new Date();
     const cycleHour = Math.floor(now.getUTCHours() / 6) * 6;
     const current = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), cycleHour));
-    const candidates = [current, new Date(current.valueOf() - 6 * 3_600_000)];
-    for (const value of candidates) {
-      const run = {
-        runDate: `${value.getUTCFullYear()}${String(value.getUTCMonth() + 1).padStart(2, "0")}${String(value.getUTCDate()).padStart(2, "0")}`,
-        cycle: String(value.getUTCHours()).padStart(2, "0"),
-        modelRunAt: value.toISOString()
-      };
-      if (await verifyRunComplete(run, Math.max(...requestedHours), budget)) return run;
-    }
+    const value = new Date(current.valueOf() - 6 * 3_600_000);
+    const run = {
+      runDate: `${value.getUTCFullYear()}${String(value.getUTCMonth() + 1).padStart(2, "0")}${String(value.getUTCDate()).padStart(2, "0")}`,
+      cycle: String(value.getUTCHours()).padStart(2, "0"),
+      modelRunAt: value.toISOString()
+    };
+    if (await verifyRunComplete(run, Math.max(...requestedHours), budget)) return run;
     throw new Error("GFS_PILOT_RUN_NOT_COMPLETE");
   }
   const product = await fetchText(NOMADS_PRODUCT_DIRECTORY, budget);
