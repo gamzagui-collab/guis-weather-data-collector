@@ -34,13 +34,13 @@ jobs:
         run: node scripts/collect-and-publish.mjs --live --local
       - name: Build verified short-lived publication artifact
         env:
-          GFS_ARTIFACT_ROOT: .artifact
+          GFS_ARTIFACT_ROOT: artifact-package
         run: node scripts/create-artifact.mjs --verified-local-store .mock-r2
       - name: Upload verified collector artifact
         uses: actions/upload-artifact@v4
         with:
           name: gfs-pilot-${{ github.run_id }}
-          path: .artifact
+          path: artifact-package
           if-no-files-found: error
           retention-days: 3
           compression-level: 6

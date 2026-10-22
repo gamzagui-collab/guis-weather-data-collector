@@ -127,9 +127,13 @@ test("preflight, collection, and publication workflows remain separated and manu
     assert.match(workflow, /contents: read/);
   }
   assert.match(collect, /actions\/upload-artifact@v4/);
+  assert.match(collect, /GFS_ARTIFACT_ROOT: artifact-package/);
+  assert.match(collect, /path: artifact-package/);
+  assert.doesNotMatch(collect, /path: \.artifact/);
   assert.doesNotMatch(collect, /R2_|SECRET_ACCESS_KEY|publish-r2/);
   assert.match(publish, /actions: read/);
   assert.match(publish, /actions\/download-artifact@v4/);
+  assert.match(publish, /GFS_ARTIFACT_ROOT: artifact-package/);
   assert.match(publish, /collect-gfs\.yml/);
   assert.match(publish, /run\.head_branch !== "main"/);
   assert.doesNotMatch(publish, /collect-and-publish|src\/noaa|nomads\.ncep/);

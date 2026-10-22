@@ -59,13 +59,13 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: gfs-pilot-${{ inputs.collect_run_id }}
-          path: .artifact
+          path: artifact-package
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
           run-id: ${{ inputs.collect_run_id }}
       - name: Verify package and artifact provenance
         env:
-          GFS_ARTIFACT_ROOT: .artifact
+          GFS_ARTIFACT_ROOT: artifact-package
           GFS_EXPECTED_REPOSITORY: ${{ github.repository }}
           GFS_EXPECTED_REF: main
           GFS_EXPECTED_SHA: ${{ steps.source.outputs.head_sha }}
@@ -74,4 +74,4 @@ jobs:
           npm test
           node scripts/verify-artifact.mjs
       - name: Publish verified objects to private Preview R2
-        run: node scripts/publish-r2.mjs --execute --verified-local-store .artifact/payload
+        run: node scripts/publish-r2.mjs --execute --verified-local-store artifact-package/payload
