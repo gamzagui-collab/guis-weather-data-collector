@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createPublicationArtifact, verifyPublicationArtifact } from "../src/artifact.mjs";
+import { createArtifactPreflight, verifyArtifactPreflight } from "../src/artifact-preflight.mjs";
 import { LocalObjectStore } from "../src/object-store.mjs";
 import { publishDataset } from "../src/publisher.mjs";
 import { PREVIEW_BUCKET, verifiedR2Environment } from "../src/r2-cli.mjs";
@@ -121,7 +122,8 @@ test("preflight, collection, and publication workflows remain separated and manu
   const collect = await readFile(join(here, "../.github/workflows/collect-gfs.yml"), "utf8");
   const publish = await readFile(join(here, "../.github/workflows/publish-gfs.yml"), "utf8");
   const preflight = await readFile(join(here, "../.github/workflows/r2-preflight.yml"), "utf8");
-  for (const workflow of [collect, publish, preflight]) {
+  const artifactPreflight = await readFile(join(here, "../.github/workflows/artifact-preflight.yml"), "utf8");
+  for (const workflow of [collect, publish, preflight, artifactPreflight]) {
     assert.match(workflow, /workflow_dispatch:/);
     assert.doesNotMatch(workflow, /schedule:|pull_request:/);
     assert.match(workflow, /contents: read/);
@@ -139,6 +141,24 @@ test("preflight, collection, and publication workflows remain separated and manu
   assert.doesNotMatch(publish, /collect-and-publish|src\/noaa|nomads\.ncep/);
   assert.match(preflight, /scripts\/r2-canary\.mjs --execute/);
   assert.doesNotMatch(preflight, /collect-and-publish|src\/noaa|nomads\.ncep/);
+  assert.match(artifactPreflight, /path: artifact-package/);
+  assert.match(artifactPreflight, /if-no-files-found: error/);
+  assert.match(artifactPreflight, /retention-days: 3/);
+  assert.match(artifactPreflight, /gfs-artifact-preflight-\$\{\{ github\.run_id \}\}/);
+  assert.doesNotMatch(artifactPreflight, /collect-and-publish|src\/noaa|nomads\.ncep|R2_/);
+});
+
+test("artifact preflight round-trip fixes the exact downloaded directory structure and SHA-256", async () => {
+  const root = await mkdtemp(join(tmpdir(), "gfs-artifact-preflight-test-"));
+  try {
+    const created = await createArtifactPreflight({ root, runId: provenance.workflowRunId, commit: provenance.commit });
+    const verified = await verifyArtifactPreflight({ root, runId: provenance.workflowRunId, commit: provenance.commit });
+    assert.deepEqual(verified.files, ["metadata.json", "payload/preflight/canary.json"]);
+    assert.equal(verified.sha256, created.sha256);
+    assert.equal(verified.bytes, created.bytes);
+    await writeFile(join(root, "payload", "preflight", "canary.json"), "{}\n", "utf8");
+    await assert.rejects(() => verifyArtifactPreflight({ root, runId: provenance.workflowRunId, commit: provenance.commit }), /MISMATCH|INTEGRITY/);
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
 
 test("canary contract performs put, head, get, hash, delete, and absence verification", async () => {
@@ -149,11 +169,14 @@ test("canary contract performs put, head, get, hash, delete, and absence verific
   assert.doesNotMatch(source, /console\.log\(process\.env|ACCESS_KEY_ID.*stdout|SECRET_ACCESS_KEY.*stdout/);
 });
 
-test("publisher verifies remote bodies, blocks latest regression, and writes latest last", async () => {
+test("publisher verifies remote bodies, blocks latest regression, writes latest last, and reuses exact objects", async () => {
   const source = await readFile(join(here, "../scripts/publish-r2.mjs"), "utf8");
   assert.match(source, /R2_LATEST_REGRESSION_BLOCKED/);
   assert.match(source, /R2_REMOTE_BODY_INTEGRITY_FAILED/);
   assert.match(source, /ordered = \[\.\.\.descriptors/);
   assert.match(source, /LATEST_KEY\]/);
+  assert.match(source, /R2_IMMUTABLE_OBJECT_CONFLICT/);
+  assert.match(source, /reusedCount/);
+  assert.match(source, /exactRemote/);
   assert.doesNotMatch(source, /collect-and-publish|src\/noaa|nomads\.ncep/);
 });

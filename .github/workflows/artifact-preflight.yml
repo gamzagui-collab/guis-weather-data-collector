@@ -1,0 +1,56 @@
+name: Artifact Upload Preflight
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Create non-sensitive preflight package
+        env:
+          GFS_ARTIFACT_PREFLIGHT_ROOT: artifact-package
+        run: node scripts/artifact-preflight.mjs --create
+      - name: Upload preflight artifact
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: gfs-artifact-preflight-${{ github.run_id }}
+          path: artifact-package
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 6
+      - name: Record Artifact ID
+        run: echo "Artifact ID ${{ steps.upload.outputs.artifact-id }}" >> "$GITHUB_STEP_SUMMARY"
+
+  verify:
+    needs: upload
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Download the same GitHub Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: gfs-artifact-preflight-${{ github.run_id }}
+          path: downloaded-package
+      - name: Verify downloaded structure, identity, and SHA-256
+        env:
+          GFS_ARTIFACT_PREFLIGHT_ROOT: downloaded-package
+        run: node scripts/artifact-preflight.mjs --verify
+      - name: Record verified Artifact ID
+        run: echo "Verified Artifact ID ${{ needs.upload.outputs.artifact_id }}" >> "$GITHUB_STEP_SUMMARY"

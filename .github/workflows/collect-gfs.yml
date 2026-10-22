@@ -37,6 +37,7 @@ jobs:
           GFS_ARTIFACT_ROOT: artifact-package
         run: node scripts/create-artifact.mjs --verified-local-store .mock-r2
       - name: Upload verified collector artifact
+        id: artifact
         uses: actions/upload-artifact@v4
         with:
           name: gfs-pilot-${{ github.run_id }}
@@ -44,6 +45,8 @@ jobs:
           if-no-files-found: error
           retention-days: 3
           compression-level: 6
+      - name: Record verified Artifact ID
+        run: echo "Artifact ID ${{ steps.artifact.outputs.artifact-id }}" >> "$GITHUB_STEP_SUMMARY"
       - name: Write sanitized collection summary
         if: always()
         run: node scripts/write-run-summary.mjs
