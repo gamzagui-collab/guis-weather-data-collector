@@ -4,6 +4,8 @@ import { delimiter, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { LocalObjectStore } from "../src/object-store.mjs";
 import { runCollectorWorkflow } from "../src/workflow.mjs";
+import { publishDataset144 } from "../src/publisher-144.mjs";
+import { assertGfs144ForecastHours } from "../src/horizon-144.mjs";
 import { classifyDiscoveredRun } from "../src/run-state.mjs";
 import {
   DownloadBudget, KOREA_BOUNDS, NOMADS_PRODUCT_DIRECTORY, downloadFrame,
@@ -23,16 +25,19 @@ if (!requestedHours.length || requestedHours.some((hour) => !Number.isInteger(ho
 }
 const exact48Hours = Array.from({ length: 48 }, (_, index) => index + 1);
 const collectionMode = process.env.GFS_COLLECTION_MODE || "PILOT";
-if (!["PILOT", "48H"].includes(collectionMode)) throw new Error("GFS_COLLECTION_MODE_INVALID");
+if (!["PILOT", "48H", "144H"].includes(collectionMode)) throw new Error("GFS_COLLECTION_MODE_INVALID");
 if (collectionMode === "48H" && JSON.stringify(requestedHours) !== JSON.stringify(exact48Hours)) {
   throw new Error("GFS_48H_FORECAST_HOURS_INVALID");
 }
+if (collectionMode === "144H") assertGfs144ForecastHours(requestedHours);
 const maxRequests = Number(process.env.GFS_MAX_REQUESTS || requestedHours.length + 3);
-if (!Number.isInteger(maxRequests) || maxRequests < requestedHours.length + 3 || maxRequests > 55) {
+const requestCeiling = collectionMode === "144H" ? 135 : 55;
+if (!Number.isInteger(maxRequests) || maxRequests < requestedHours.length + 3 || maxRequests > requestCeiling) {
   throw new Error("GFS_MAX_REQUESTS_INVALID");
 }
 const maxBytes = Number(process.env.GFS_MAX_DOWNLOAD_BYTES || 64 * 1024 * 1024);
-if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || (collectionMode === "48H" && maxBytes > 15 * 1024 * 1024)) {
+const byteCeiling = collectionMode === "144H" ? 20 * 1024 * 1024 : 15 * 1024 * 1024;
+if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || (["48H", "144H"].includes(collectionMode) && maxBytes > byteCeiling)) {
   throw new Error("GFS_MAX_DOWNLOAD_BYTES_INVALID");
 }
 const budget = new DownloadBudget({
@@ -70,6 +75,7 @@ async function discoverRun() {
     if (budget.requestsUsed >= maxRequests - requestedHours.length) break;
     if (await verifyRunComplete(run, Math.max(...requestedHours), budget)) return run;
   }
+  if (collectionMode === "144H") throw new Error("GFS_NO_COMPLETE_144H_RUN_WITHIN_BUDGET");
   throw new Error("GFS_NO_COMPLETE_48H_RUN_WITHIN_BUDGET");
 }
 
@@ -84,7 +90,7 @@ async function existingCollectedArtifact(run) {
   if (!token || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository || "")) {
     throw new Error("GFS_GITHUB_DEDUP_CONFIGURATION_MISSING");
   }
-  const artifactName = `gfs-48h-${runKey(run)}`;
+  const artifactName = `gfs-${collectionMode.toLowerCase()}-${runKey(run)}`;
   const api = new URL(`https://api.github.com/repos/${repository}/actions/artifacts`);
   api.searchParams.set("name", artifactName);
   api.searchParams.set("per_page", "10");
@@ -105,7 +111,8 @@ async function existingCollectedArtifact(run) {
     const previousRun = await runResponse.json();
     const trustedWorkflow = new Set([
       ".github/workflows/collect-gfs.yml",
-      ".github/workflows/collect-gfs-automatic.yml"
+      ".github/workflows/collect-gfs-automatic.yml",
+      ".github/workflows/collect-gfs-144h-manual.yml"
     ]).has(String(previousRun.path || "").split("@")[0]);
     const trustedEvent = new Set(["workflow_dispatch", "schedule"]).has(previousRun.event);
     if (previousRun.repository?.full_name === repository && previousRun.head_branch === "main"
@@ -189,8 +196,14 @@ try {
     result = { status: decision.runState, modelRunAt: discoveredRun.modelRunAt,
       publication: null, reason: "VERIFIED_ARTIFACT_REQUIRES_PUBLICATION_CHECK", artifact, ...decision };
   } else {
-    const collected = await runCollectorWorkflow({ store, discoverRun: async () => discoveredRun, collectDataset });
-    result = { ...collected, status: "NEW_RUN", ...decision };
+    if (collectionMode === "144H") {
+      const dataset = await collectDataset(discoveredRun);
+      const publication = await publishDataset144(store, dataset);
+      result = { status: "NEW_RUN", modelRunAt: discoveredRun.modelRunAt, publication, ...decision };
+    } else {
+      const collected = await runCollectorWorkflow({ store, discoverRun: async () => discoveredRun, collectDataset });
+      result = { ...collected, status: "NEW_RUN", ...decision };
+    }
   }
   await preserveEvidence({ status: "SUCCESS", result });
   if (process.env.GITHUB_OUTPUT) {

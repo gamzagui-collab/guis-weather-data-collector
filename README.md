@@ -15,6 +15,13 @@ combined collect-to-publish workflow at 05:37, 11:37, 17:37 and 23:37 UTC.
 The schedule was activated only after a new official run passed the complete
 manual collect, Artifact, R2 publication and latest-pointer E2E.
 
+P2-I-J-2 adds an isolated manual `144H` mode without changing that 48-hour
+schedule. It requests exactly f001-f120 hourly and f123-f144 every three hours
+(128 official forecast files), rejects any missing member, and publishes only
+under `horizons/144h/`. The root 48-hour `latest.json` is never a target of the
+144-hour publisher. Its v2 index keeps the 8 x 8 spatial tiles and divides time
+into six 24-hour windows so a site query reads only the requested period.
+
 Independent recovery workflows remain available:
 
 - `.github/workflows/r2-preflight.yml` performs a private canary put/head/get/hash/delete test without NOAA access;
@@ -26,7 +33,8 @@ Independent recovery workflows remain available:
   15 MiB, with a minimum ten-second interval;
 - GFS data is written only to the private Preview bucket named
   `guis-weather-gfs-preview`;
-- public Weather GFS remains disabled.
+- the existing 48-hour Preview feed keeps its current policy; the new 144-hour
+  feed remains non-public in this stage.
 
 The combined workflow has two jobs. `collect` receives no R2 credentials and
 uploads a three-day verified artifact. `publish` starts only after `collect`
@@ -49,6 +57,23 @@ runs/{runId}/forecasts/{frameId}.json
 runs/{runId}/indexes/v1/manifest.json
 runs/{runId}/indexes/v1/tiles/{tileId}.json
 ```
+
+The separately published 144-hour manual validation uses:
+
+```text
+horizons/144h/latest.json
+horizons/144h/status/collector.json
+horizons/144h/runs/{runId}/manifest.json
+horizons/144h/runs/{runId}/grid.json
+horizons/144h/runs/{runId}/forecasts/{frameId}.json
+horizons/144h/runs/{runId}/indexes/v2/manifest.json
+horizons/144h/runs/{runId}/indexes/v2/tiles/{tileId}/{timeWindow}.json
+```
+
+`.github/workflows/collect-gfs-144h-manual.yml` is `workflow_dispatch` only,
+has a 60-minute collection timeout, a 135-request/20-MiB ceiling, keeps R2
+credentials out of the collector job, and publishes the namespaced latest
+pointer only after source and index verification. It does not add a schedule.
 
 The publisher writes the grid and forecast shards, reads them back, verifies
 their schema/byte length/SHA-256, writes and verifies the manifest, and changes

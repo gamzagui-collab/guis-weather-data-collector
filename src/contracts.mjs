@@ -11,7 +11,7 @@ const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$/;
 const SOURCE_UNITS = new Set(["kg m-2", "kg m**-2"]);
 
 export function validateCoverage(coverage) {
-  if (!coverage || coverage.kind !== "FORECAST_HOUR_SET" || !["48H", "CUSTOM"].includes(coverage.label)) {
+  if (!coverage || coverage.kind !== "FORECAST_HOUR_SET" || !["48H", "144H", "CUSTOM"].includes(coverage.label)) {
     throw new Error("GFS_COVERAGE_INVALID");
   }
   const expected = coverage.expectedForecastHours;
@@ -27,6 +27,17 @@ export function validateCoverage(coverage) {
   }
   if (coverage.label === "48H" && JSON.stringify(expected) !== JSON.stringify(Array.from({ length: 48 }, (_, index) => index + 1))) {
     throw new Error("GFS_48H_COVERAGE_INVALID");
+  }
+  if (coverage.label === "144H") {
+    const official = [...Array.from({ length: 120 }, (_, index) => index + 1), ...Array.from({ length: 8 }, (_, index) => 123 + index * 3)];
+    const cadence = [
+      { startForecastHour: 1, endForecastHour: 120, intervalHours: 1 },
+      { startForecastHour: 123, endForecastHour: 144, intervalHours: 3 }
+    ];
+    if (coverage.horizonHours !== 144 || coverage.firstForecastHour !== 1 || coverage.lastForecastHour !== 144
+      || JSON.stringify(expected) !== JSON.stringify(official) || JSON.stringify(coverage.sourceCadence) !== JSON.stringify(cadence)) {
+      throw new Error("GFS_144H_COVERAGE_INVALID");
+    }
   }
   return coverage;
 }

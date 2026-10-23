@@ -165,15 +165,27 @@ def build_dataset(paths, fetched_at, bounds, expected_forecast_hours=None):
     expected_hours = sorted(set(expected_forecast_hours or source_file_hours))
     if source_file_hours != expected_hours or actual_hours != expected_hours:
         raise RuntimeError("Incomplete forecast-hour coverage")
+    official_144h = list(range(1, 121)) + list(range(123, 145, 3))
+    coverage_label = "48H" if expected_hours == list(range(1, 49)) else "144H" if expected_hours == official_144h else "CUSTOM"
     coverage = {
         "kind": "FORECAST_HOUR_SET",
-        "label": "48H" if expected_hours == list(range(1, 49)) else "CUSTOM",
+        "label": coverage_label,
         "startForecastHour": expected_hours[0],
         "endForecastHour": expected_hours[-1],
         "expectedForecastHours": expected_hours,
         "collectedForecastHours": actual_hours,
         "complete": True
     }
+    if coverage_label == "144H":
+        coverage.update({
+            "horizonHours": 144,
+            "firstForecastHour": 1,
+            "lastForecastHour": 144,
+            "sourceCadence": [
+                {"startForecastHour": 1, "endForecastHour": 120, "intervalHours": 1},
+                {"startForecastHour": 123, "endForecastHour": 144, "intervalHours": 3}
+            ]
+        })
     return {
         "schemaVersion": "weather.gfs.grid.v1", "provider": "NOAA/NCEP", "model": "GFS", "broker": None,
         "source": "NOAA/NCEP NOMADS", "sourceUrl": "https://nomads.ncep.noaa.gov/",

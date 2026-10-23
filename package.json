@@ -1,6 +1,6 @@
 {
   "name": "guis-weather-data-collector",
-  "version": "0.4.3-p2ij1",
+  "version": "0.5.0-p2ij2",
   "private": true,
   "type": "module",
   "engines": {
