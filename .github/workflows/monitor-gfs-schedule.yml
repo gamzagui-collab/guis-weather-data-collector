@@ -53,6 +53,7 @@ jobs:
             }
             let lastPublication = null;
             let latestScheduledOutcome = "UNKNOWN";
+            const publicationScan = [];
             if (result.lastScheduled) {
               const jobs = await cachedJobs(result.lastScheduled);
               const publish = namedJob(jobs, "publish");
@@ -67,6 +68,7 @@ jobs:
             }
             for (const run of collector.data.workflow_runs.filter((item) => item.status === "completed").slice(0, 20)) {
               const jobs = await cachedJobs(run);
+              if (publicationScan.length < 5) publicationScan.push(`${run.id}:${jobs.map((job) => `${job.name}=${job.conclusion}`).join("|")}`);
               if (namedJob(jobs, "publish")?.conclusion === "success") {
                 lastPublication = run;
                 break;
@@ -82,6 +84,7 @@ jobs:
               .addRaw(`Consecutive scheduled failures: ${result.consecutiveScheduledFailures}\n`)
               .addRaw(`Expected collector slot: ${result.expectedCollectorSlot}\n`)
               .addRaw(`Expected monitor slot: ${result.expectedMonitorSlot}\n`)
+              .addRaw(`Publication scan: ${publicationScan.join(" ; ") || "none"}\n`)
               .addRaw(`Reasons: ${result.reasons.join(", ") || "none"}\n`).write();
             if (result.reasons.includes("COLLECTOR_SCHEDULE_START_DELAYED")) core.warning("GFS_SCHEDULE_START_DELAYED");
             if (result.reasons.includes("MONITOR_SCHEDULE_START_DELAYED")) core.warning("GFS_MONITOR_START_DELAYED");
