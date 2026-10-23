@@ -18,28 +18,68 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      - uses: actions/checkout@v4
       - name: Check collector attempts and consecutive failures
         uses: actions/github-script@v7
         with:
           script: |
+            const { pathToFileURL } = await import("node:url");
+            const { evaluateScheduleMonitor } = await import(pathToFileURL(`${process.env.GITHUB_WORKSPACE}/src/schedule-monitor.mjs`).href);
             const { owner, repo } = context.repo;
             const workflow_id = "collect-gfs-automatic.yml";
-            const { data } = await github.rest.actions.listWorkflowRuns({ owner, repo, workflow_id, per_page: 20 });
-            const completed = data.workflow_runs.filter((run) => run.status === "completed");
-            const lastAttempt = completed[0];
-            const lastSuccess = completed.find((run) => run.conclusion === "success");
-            const failures = completed.findIndex((run) => run.conclusion === "success");
-            const consecutiveFailures = failures < 0 ? completed.length : failures;
-            const now = Date.now();
-            const attemptAgeHours = lastAttempt ? (now - Date.parse(lastAttempt.created_at)) / 3600000 : Infinity;
-            const successAgeHours = lastSuccess ? (now - Date.parse(lastSuccess.updated_at)) / 3600000 : Infinity;
-            await core.summary.addHeading("GFS schedule monitor")
-              .addRaw(`Last attempt: ${lastAttempt?.created_at || "none"}\n`)
-              .addRaw(`Last success: ${lastSuccess?.updated_at || "none"}\n`)
-              .addRaw(`Consecutive failures: ${consecutiveFailures}\n`)
-              .addRaw(`Attempt age hours: ${attemptAgeHours.toFixed(2)}\n`)
-              .addRaw(`Success age hours: ${successAgeHours.toFixed(2)}\n`).write();
-            if (attemptAgeHours > 8) core.setFailed("GFS_SCHEDULE_ATTEMPT_MISSING");
-            else if (successAgeHours > 14) core.setFailed("GFS_LAST_SUCCESS_STALE");
-            else if (consecutiveFailures >= 2) core.setFailed("GFS_CONSECUTIVE_FAILURES");
+            const [collector, monitor] = await Promise.all([
+              github.rest.actions.listWorkflowRuns({ owner, repo, workflow_id, per_page: 50 }),
+              github.rest.actions.listWorkflowRuns({ owner, repo, workflow_id: "monitor-gfs-schedule.yml", per_page: 20 })
+            ]);
+            const result = evaluateScheduleMonitor({
+              collectorRuns: collector.data.workflow_runs,
+              monitorRuns: monitor.data.workflow_runs,
+              now: new Date()
+            });
 
+            async function jobsFor(run) {
+              if (!run) return [];
+              const response = await github.rest.actions.listJobsForWorkflowRun({ owner, repo, run_id: Number(run.id), per_page: 100 });
+              return response.data.jobs;
+            }
+            const jobsByRun = new Map();
+            async function cachedJobs(run) {
+              if (!run) return [];
+              if (!jobsByRun.has(String(run.id))) jobsByRun.set(String(run.id), await jobsFor(run));
+              return jobsByRun.get(String(run.id));
+            }
+            let lastPublication = null;
+            let latestScheduledOutcome = "UNKNOWN";
+            if (result.lastScheduled) {
+              const jobs = await cachedJobs(result.lastScheduled);
+              const publish = jobs.find((job) => job.name === "publish");
+              const collect = jobs.find((job) => job.name === "collect");
+              if (collect?.conclusion === "success" && publish?.conclusion === "skipped") {
+                latestScheduledOutcome = "NO_NEW_COMPLETE_RUN";
+              } else if (publish?.conclusion === "success") {
+                latestScheduledOutcome = "PUBLISHED_COMPLETE";
+              } else if (publish?.conclusion === "failure") {
+                latestScheduledOutcome = "PUBLICATION_FAILED";
+              }
+            }
+            for (const run of collector.data.workflow_runs.filter((item) => item.status === "completed").slice(0, 20)) {
+              const jobs = await cachedJobs(run);
+              if (jobs.find((job) => job.name === "publish")?.conclusion === "success") {
+                lastPublication = run;
+                break;
+              }
+            }
+            await core.summary.addHeading("GFS schedule monitor")
+              .addRaw(`Last scheduled run: ${result.lastScheduled?.createdAt || "none"}\n`)
+              .addRaw(`Last scheduled success: ${result.lastScheduledSuccess?.updatedAt || "none"}\n`)
+              .addRaw(`Last manual run: ${result.lastManual?.createdAt || "none"}\n`)
+              .addRaw(`Last R2 publication run: ${lastPublication?.updatedAt || "not in inspected runs"}\n`)
+              .addRaw(`Latest scheduled outcome: ${latestScheduledOutcome}\n`)
+              .addRaw(`Scheduled start delay minutes: ${result.lastScheduled ? (result.lastScheduled.startDelayMs / 60000).toFixed(1) : "n/a"}\n`)
+              .addRaw(`Consecutive scheduled failures: ${result.consecutiveScheduledFailures}\n`)
+              .addRaw(`Expected collector slot: ${result.expectedCollectorSlot}\n`)
+              .addRaw(`Expected monitor slot: ${result.expectedMonitorSlot}\n`)
+              .addRaw(`Reasons: ${result.reasons.join(", ") || "none"}\n`).write();
+            if (result.reasons.includes("COLLECTOR_SCHEDULE_START_DELAYED")) core.warning("GFS_SCHEDULE_START_DELAYED");
+            if (result.reasons.includes("MONITOR_SCHEDULE_START_DELAYED")) core.warning("GFS_MONITOR_START_DELAYED");
+            if (result.status === "FAILED") core.setFailed(result.reasons.join(","));

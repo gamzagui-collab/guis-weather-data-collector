@@ -10,6 +10,7 @@ import { LocalObjectStore } from "../src/object-store.mjs";
 import { publishDataset } from "../src/publisher.mjs";
 import { classifyDiscoveredRun } from "../src/run-state.mjs";
 import { evaluateStorageProtection, R2_STORAGE_STOP_BYTES } from "../src/storage-policy.mjs";
+import { evaluateScheduleMonitor } from "../src/schedule-monitor.mjs";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
 const read = (relative) => readFile(join(here, "..", relative), "utf8");
@@ -112,9 +113,71 @@ test("verified combined pipeline and freshness monitor schedules are active", as
   ]);
   assert.match(collector, /37 5,11,17,23 \* \* \*/);
   assert.match(monitor, /17 2,8,14,20 \* \* \*/);
-  assert.match(monitor, /GFS_SCHEDULE_ATTEMPT_MISSING/);
-  assert.match(monitor, /GFS_LAST_SUCCESS_STALE/);
-  assert.match(monitor, /GFS_CONSECUTIVE_FAILURES/);
+  assert.match(monitor, /COLLECTOR_SCHEDULE_START_DELAYED/);
+  assert.match(monitor, /result\.status === "FAILED"/);
+  assert.match(monitor, /consecutiveScheduledFailures/);
+  assert.match(monitor, /lastScheduled/);
+  assert.match(monitor, /lastManual/);
+  assert.match(monitor, /NO_NEW_COMPLETE_RUN/);
+  assert.doesNotMatch(monitor, /const completed = data\.workflow_runs/);
+});
+
+test("manual success cannot hide a missing scheduled collector execution", () => {
+  const result = evaluateScheduleMonitor({
+    now: new Date("2026-10-23T04:00:00Z"),
+    collectorRuns: [{
+      id: 1, event: "workflow_dispatch", status: "completed", conclusion: "success",
+      created_at: "2026-10-23T03:50:00Z", updated_at: "2026-10-23T03:55:00Z"
+    }]
+  });
+  assert.equal(result.lastScheduled, null);
+  assert.equal(result.lastManual.id, "1");
+  assert.equal(result.status, "FAILED");
+  assert.ok(result.reasons.includes("COLLECTOR_SCHEDULE_EXECUTION_MISSING"));
+});
+
+test("first scheduled run preserves its 135 minute delay regression evidence", () => {
+  const result = evaluateScheduleMonitor({
+    now: new Date("2026-10-23T02:20:00Z"),
+    collectorRuns: [{
+      id: 39886451212, event: "schedule", status: "completed", conclusion: "success",
+      created_at: "2026-10-23T01:52:34Z", updated_at: "2026-10-23T01:54:05Z"
+    }],
+    monitorRuns: [{
+      id: 2, event: "schedule", status: "completed", conclusion: "success",
+      created_at: "2026-10-23T02:18:00Z", updated_at: "2026-10-23T02:19:00Z"
+    }]
+  });
+  assert.equal(result.lastScheduled.scheduledFor, "2026-10-22T23:37:00.000Z");
+  assert.equal(result.lastScheduled.startDelayMs, 8_134_000);
+  assert.equal(result.lastScheduledSuccess.id, "39886451212");
+  assert.ok(result.reasons.includes("COLLECTOR_SCHEDULE_START_DELAYED"));
+  assert.equal(result.status, "DELAYED");
+});
+
+test("scheduled failures are counted independently from later manual success", () => {
+  const result = evaluateScheduleMonitor({
+    now: new Date("2026-10-23T15:00:00Z"),
+    collectorRuns: [
+      { id: 3, event: "workflow_dispatch", status: "completed", conclusion: "success", created_at: "2026-10-23T14:55:00Z" },
+      { id: 2, event: "schedule", status: "completed", conclusion: "failure", created_at: "2026-10-23T14:40:00Z" },
+      { id: 1, event: "schedule", status: "completed", conclusion: "failure", created_at: "2026-10-23T08:40:00Z" }
+    ]
+  });
+  assert.equal(result.consecutiveScheduledFailures, 2);
+  assert.ok(result.reasons.includes("COLLECTOR_CONSECUTIVE_SCHEDULE_FAILURES"));
+  assert.equal(result.status, "FAILED");
+});
+
+test("monitor schedule absence is tracked separately from collector success", () => {
+  const result = evaluateScheduleMonitor({
+    now: new Date("2026-10-23T06:30:00Z"),
+    collectorRuns: [{ id: 1, event: "schedule", status: "completed", conclusion: "success", created_at: "2026-10-23T05:40:00Z" }],
+    monitorRuns: []
+  });
+  assert.equal(result.collectorSlotObserved, true);
+  assert.equal(result.monitorSlotObserved, false);
+  assert.ok(result.reasons.includes("MONITOR_SCHEDULE_EXECUTION_MISSING"));
 });
 
 test("manual publish can recover a verified artifact from a failed combined publish run", async () => {
@@ -216,7 +279,7 @@ test("publisher exposes manifest and latest SHA without logging credentials", as
   assert.doesNotMatch(source, /console\.log\(process\.env|SECRET_ACCESS_KEY.*stdout/);
 });
 
-test("collector package version marks the P2-I-H-2 deployment contract", async () => {
+test("collector package version marks the P2-I-H-3 monitoring contract", async () => {
   const packageJson = JSON.parse(await read("package.json"));
-  assert.equal(packageJson.version, "0.4.1-p2ih2b");
+  assert.equal(packageJson.version, "0.4.2-p2ih3");
 });
