@@ -122,6 +122,7 @@ test("verified combined pipeline and freshness monitor schedules are active", as
   assert.match(monitor, /function namedJob/);
   assert.match(monitor, /slice\(0, 20\)/);
   assert.match(monitor, /Publication scan/);
+  assert.match(monitor, /lastPublication\?\.updated_at/);
   assert.doesNotMatch(monitor, /const completed = data\.workflow_runs/);
 });
 

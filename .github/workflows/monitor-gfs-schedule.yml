@@ -78,7 +78,7 @@ jobs:
               .addRaw(`Last scheduled run: ${result.lastScheduled?.createdAt || "none"}\n`)
               .addRaw(`Last scheduled success: ${result.lastScheduledSuccess?.updatedAt || "none"}\n`)
               .addRaw(`Last manual run: ${result.lastManual?.createdAt || "none"}\n`)
-              .addRaw(`Last R2 publication run: ${lastPublication?.updatedAt || "not in inspected runs"}\n`)
+              .addRaw(`Last R2 publication run: ${lastPublication?.updated_at || lastPublication?.updatedAt || "not in inspected runs"}\n`)
               .addRaw(`Latest scheduled outcome: ${latestScheduledOutcome}\n`)
               .addRaw(`Scheduled start delay minutes: ${result.lastScheduled ? (result.lastScheduled.startDelayMs / 60000).toFixed(1) : "n/a"}\n`)
               .addRaw(`Consecutive scheduled failures: ${result.consecutiveScheduledFailures}\n`)
