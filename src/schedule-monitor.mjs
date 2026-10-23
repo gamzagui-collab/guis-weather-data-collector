@@ -51,7 +51,7 @@ function runSummary(run, schedule) {
   };
 }
 
-export function evaluateScheduleMonitor({ collectorRuns, monitorRuns = [], now = new Date() }) {
+export function evaluateScheduleMonitor({ collectorRuns, monitorRuns = [], currentMonitorRun = null, now = new Date() }) {
   const nowIso = now instanceof Date ? now.toISOString() : new Date(instant(now, "SCHEDULE_MONITOR_NOW_INVALID")).toISOString();
   const nowMs = Date.parse(nowIso);
   const completed = normalizedRuns(collectorRuns);
@@ -71,7 +71,14 @@ export function evaluateScheduleMonitor({ collectorRuns, monitorRuns = [], now =
   const collectorSlotObserved = lastScheduled?.scheduledFor === expectedCollectorSlot;
   const collectorScheduleMissing = !collectorSlotObserved && expectedCollectorAgeMs > SCHEDULE_MISSING_MS;
 
-  const completedMonitors = normalizedRuns(monitorRuns).filter((run) => run.event === "schedule");
+  const currentScheduledMonitor = currentMonitorRun?.event === "schedule"
+    && Number.isFinite(Date.parse(currentMonitorRun.created_at || currentMonitorRun.createdAt || ""))
+    ? { ...currentMonitorRun, status: "completed" }
+    : null;
+  const monitorEvidence = currentScheduledMonitor
+    ? [currentScheduledMonitor, ...monitorRuns.filter((run) => String(run?.id) !== String(currentScheduledMonitor.id))]
+    : monitorRuns;
+  const completedMonitors = normalizedRuns(monitorEvidence).filter((run) => run.event === "schedule");
   const lastMonitorScheduled = runSummary(completedMonitors[0], MONITOR_SCHEDULE);
   const expectedMonitorSlot = expectedScheduleSlot(nowIso, MONITOR_SCHEDULE);
   const expectedMonitorAgeMs = Math.max(0, nowMs - Date.parse(expectedMonitorSlot));
@@ -97,6 +104,7 @@ export function evaluateScheduleMonitor({ collectorRuns, monitorRuns = [], now =
     expectedCollectorSlot,
     collectorSlotObserved,
     lastMonitorScheduled,
+    currentMonitorRunObserved: Boolean(currentScheduledMonitor),
     expectedMonitorSlot,
     monitorSlotObserved
   };

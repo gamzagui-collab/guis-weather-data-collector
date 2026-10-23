@@ -31,9 +31,11 @@ jobs:
               github.rest.actions.listWorkflowRuns({ owner, repo, workflow_id, per_page: 50 }),
               github.rest.actions.listWorkflowRuns({ owner, repo, workflow_id: "monitor-gfs-schedule.yml", per_page: 20 })
             ]);
+            const currentMonitorRun = monitor.data.workflow_runs.find((run) => String(run.id) === String(context.runId)) || null;
             const result = evaluateScheduleMonitor({
               collectorRuns: collector.data.workflow_runs,
               monitorRuns: monitor.data.workflow_runs,
+              currentMonitorRun,
               now: new Date()
             });
 
@@ -84,6 +86,7 @@ jobs:
               .addRaw(`Consecutive scheduled failures: ${result.consecutiveScheduledFailures}\n`)
               .addRaw(`Expected collector slot: ${result.expectedCollectorSlot}\n`)
               .addRaw(`Expected monitor slot: ${result.expectedMonitorSlot}\n`)
+              .addRaw(`Current monitor run observed: ${result.currentMonitorRunObserved}\n`)
               .addRaw(`Publication scan: ${publicationScan.join(" ; ") || "none"}\n`)
               .addRaw(`Reasons: ${result.reasons.join(", ") || "none"}\n`).write();
             if (result.reasons.includes("COLLECTOR_SCHEDULE_START_DELAYED")) core.warning("GFS_SCHEDULE_START_DELAYED");

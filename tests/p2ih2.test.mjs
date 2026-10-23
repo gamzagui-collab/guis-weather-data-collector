@@ -123,7 +123,57 @@ test("verified combined pipeline and freshness monitor schedules are active", as
   assert.match(monitor, /slice\(0, 20\)/);
   assert.match(monitor, /Publication scan/);
   assert.match(monitor, /lastPublication\?\.updated_at/);
+  assert.match(monitor, /currentMonitorRun/);
   assert.doesNotMatch(monitor, /const completed = data\.workflow_runs/);
+});
+
+test("a running scheduled monitor observes itself instead of failing as missing", () => {
+  const currentMonitorRun = {
+    id: 39918907743,
+    event: "schedule",
+    status: "in_progress",
+    conclusion: null,
+    created_at: "2026-10-23T07:36:37Z"
+  };
+  const result = evaluateScheduleMonitor({
+    now: new Date("2026-10-23T07:36:42Z"),
+    collectorRuns: [{
+      id: 39886451212, event: "schedule", status: "completed", conclusion: "success",
+      created_at: "2026-10-23T01:52:34Z", updated_at: "2026-10-23T01:54:05Z"
+    }],
+    monitorRuns: [currentMonitorRun],
+    currentMonitorRun
+  });
+  assert.equal(result.currentMonitorRunObserved, true);
+  assert.equal(result.monitorSlotObserved, true);
+  assert.equal(result.lastMonitorScheduled.id, "39918907743");
+  assert.equal(result.status, "DELAYED");
+  assert.deepEqual(result.reasons.sort(), ["COLLECTOR_SCHEDULE_START_DELAYED", "MONITOR_SCHEDULE_START_DELAYED"]);
+  assert.ok(!result.reasons.includes("MONITOR_SCHEDULE_EXECUTION_MISSING"));
+});
+
+test("a running manual monitor cannot satisfy the current collector or monitor slots", () => {
+  const currentMonitorRun = {
+    id: 39907442061,
+    event: "workflow_dispatch",
+    status: "in_progress",
+    conclusion: null,
+    created_at: "2026-10-23T07:36:37Z"
+  };
+  const result = evaluateScheduleMonitor({
+    now: new Date("2026-10-23T07:36:42Z"),
+    collectorRuns: [{
+      id: 1, event: "workflow_dispatch", status: "completed", conclusion: "success",
+      created_at: "2026-10-23T07:30:00Z", updated_at: "2026-10-23T07:31:00Z"
+    }],
+    monitorRuns: [currentMonitorRun],
+    currentMonitorRun
+  });
+  assert.equal(result.currentMonitorRunObserved, false);
+  assert.equal(result.status, "FAILED");
+  assert.equal(result.collectorSlotObserved, false);
+  assert.equal(result.monitorSlotObserved, false);
+  assert.equal(result.reasons.includes("MONITOR_SCHEDULE_EXECUTION_MISSING"), true);
 });
 
 test("manual success cannot hide a missing scheduled collector execution", () => {
@@ -283,7 +333,7 @@ test("publisher exposes manifest and latest SHA without logging credentials", as
   assert.doesNotMatch(source, /console\.log\(process\.env|SECRET_ACCESS_KEY.*stdout/);
 });
 
-test("collector package version marks the P2-I-H-3 monitoring contract", async () => {
+test("collector package version marks the P2-I-J-1 monitoring contract", async () => {
   const packageJson = JSON.parse(await read("package.json"));
-  assert.equal(packageJson.version, "0.4.2-p2ih3");
+  assert.equal(packageJson.version, "0.4.3-p2ij1");
 });
