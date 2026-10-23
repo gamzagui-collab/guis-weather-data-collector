@@ -119,6 +119,8 @@ test("verified combined pipeline and freshness monitor schedules are active", as
   assert.match(monitor, /lastScheduled/);
   assert.match(monitor, /lastManual/);
   assert.match(monitor, /NO_NEW_COMPLETE_RUN/);
+  assert.match(monitor, /function namedJob/);
+  assert.match(monitor, /slice\(0, 20\)/);
   assert.doesNotMatch(monitor, /const completed = data\.workflow_runs/);
 });
 

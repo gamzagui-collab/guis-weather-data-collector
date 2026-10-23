@@ -42,6 +42,9 @@ jobs:
               const response = await github.rest.actions.listJobsForWorkflowRun({ owner, repo, run_id: Number(run.id), per_page: 100 });
               return response.data.jobs;
             }
+            function namedJob(jobs, id) {
+              return jobs.find((job) => job.name === id || job.name.endsWith(` / ${id}`) || job.name.startsWith(`${id} `));
+            }
             const jobsByRun = new Map();
             async function cachedJobs(run) {
               if (!run) return [];
@@ -52,8 +55,8 @@ jobs:
             let latestScheduledOutcome = "UNKNOWN";
             if (result.lastScheduled) {
               const jobs = await cachedJobs(result.lastScheduled);
-              const publish = jobs.find((job) => job.name === "publish");
-              const collect = jobs.find((job) => job.name === "collect");
+              const publish = namedJob(jobs, "publish");
+              const collect = namedJob(jobs, "collect");
               if (collect?.conclusion === "success" && publish?.conclusion === "skipped") {
                 latestScheduledOutcome = "NO_NEW_COMPLETE_RUN";
               } else if (publish?.conclusion === "success") {
@@ -64,7 +67,7 @@ jobs:
             }
             for (const run of collector.data.workflow_runs.filter((item) => item.status === "completed").slice(0, 20)) {
               const jobs = await cachedJobs(run);
-              if (jobs.find((job) => job.name === "publish")?.conclusion === "success") {
+              if (namedJob(jobs, "publish")?.conclusion === "success") {
                 lastPublication = run;
                 break;
               }
