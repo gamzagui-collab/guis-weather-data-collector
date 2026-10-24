@@ -8,7 +8,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: guis-weather-gfs-collector-144h
+  group: guis-weather-gfs-noaa-collection
   cancel-in-progress: false
 
 jobs:

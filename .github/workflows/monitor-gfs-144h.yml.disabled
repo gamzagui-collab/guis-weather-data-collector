@@ -1,0 +1,38 @@
+name: Monitor GFS 144H Schedule Freshness Prepared
+
+# Prepared only. This becomes active after the 144H collector schedule is
+# separately approved and enabled.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: guis-weather-gfs-144h-schedule-monitor
+  cancel-in-progress: true
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GFS_MONITOR_HORIZON: "144H"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const { pathToFileURL } = await import("node:url");
+            const { evaluateIndependentHorizonStatus } = await import(pathToFileURL(`${process.env.GITHUB_WORKSPACE}/src/cutover-readiness.mjs`).href);
+            const state = evaluateIndependentHorizonStatus({
+              horizon: process.env.GFS_MONITOR_HORIZON,
+              latest: null,
+              schedule: { lastScheduledAttemptAt: null, lastScheduledSuccessAt: null, consecutiveFailures: 0 },
+              publication: { lastPublishedAt: null },
+              storageUsage: 0
+            });
+            await core.summary.addHeading("GFS 144H monitor readiness")
+              .addRaw(`Horizon: ${state.horizon}\n`)
+              .addRaw("Schedule is not active. No 48H evidence is accepted for this state.\n").write();

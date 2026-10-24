@@ -10,7 +10,9 @@ permissions:
   actions: read
 
 concurrency:
-  group: guis-weather-gfs-collector-48h
+  # Shared with the prepared 144H workflows so an approved cutover cannot
+  # download the same NOAA cycle twice.
+  group: guis-weather-gfs-noaa-collection
   cancel-in-progress: false
 
 jobs:

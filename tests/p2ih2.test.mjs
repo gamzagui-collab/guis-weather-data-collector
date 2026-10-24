@@ -22,7 +22,7 @@ test("combined manual pipeline isolates R2 credentials to publish after successf
   assert.match(workflow, /workflow_dispatch:/);
   assert.match(workflow, /schedule:/);
   assert.match(workflow, /37 5,11,17,23 \* \* \*/);
-  assert.match(workflow, /group: guis-weather-gfs-collector-48h/);
+  assert.match(workflow, /group: guis-weather-gfs-noaa-collection/);
   assert.match(collect, /collect-and-publish\.mjs --live --local/);
   assert.match(collect, /actions\/upload-artifact@v4/);
   assert.doesNotMatch(collect, /secrets\.|R2_(?:ACCOUNT|ACCESS|SECRET|BUCKET)/);
@@ -333,7 +333,7 @@ test("publisher exposes manifest and latest SHA without logging credentials", as
   assert.doesNotMatch(source, /console\.log\(process\.env|SECRET_ACCESS_KEY.*stdout/);
 });
 
-test("collector package version marks the P2-I-J-2 144-hour contract", async () => {
+test("collector package version marks the P2-I-J-4 cutover contract", async () => {
   const packageJson = JSON.parse(await read("package.json"));
-  assert.equal(packageJson.version, "0.5.0-p2ij2");
+  assert.equal(packageJson.version, "0.6.0-p2ij4");
 });

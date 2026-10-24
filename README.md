@@ -22,6 +22,14 @@ under `horizons/144h/`. The root 48-hour `latest.json` is never a target of the
 144-hour publisher. Its v2 index keeps the 8 x 8 spatial tiles and divides time
 into six 24-hour windows so a site query reads only the requested period.
 
+P2-I-J-4 adds a cutover-readiness layer without activating the 144-hour
+schedule. The active 48-hour and manual 144-hour collectors share one NOAA
+collection concurrency group. A disabled automatic workflow template retains
+the 128-file, 135-request, 20-MiB and ten-second-spacing limits. The read-only
+cutover audit compares every official f001-f048 contract for one identical
+`modelRunAt`, rejects cross-run comparisons, and computes a namespace-aware R2
+retention dry run without issuing PutObject, DeleteObject or lifecycle changes.
+
 Independent recovery workflows remain available:
 
 - `.github/workflows/r2-preflight.yml` performs a private canary put/head/get/hash/delete test without NOAA access;
