@@ -6,6 +6,11 @@ import { mergeCanaryState } from "../src/canary-state.mjs";
 import { classifyDiscoveredRun } from "../src/run-state.mjs";
 import { evaluateScheduleMonitor } from "../src/schedule-monitor.mjs";
 import { buildRetentionDryRun } from "../src/cutover-readiness.mjs";
+import {
+  evaluateStorageProtection,
+  GFS_ESTIMATED_144H_INDEXED_RUN_BYTES,
+  R2_STORAGE_STOP_BYTES
+} from "../src/storage-policy.mjs";
 
 const read = (relative) => readFile(new URL(`../${relative}`, import.meta.url), "utf8");
 const config = {
@@ -184,4 +189,14 @@ test("retention compares latest identity within its namespace", () => {
   });
   assert.deepEqual(result.deleteCandidates.map((item) => `${item.namespace}:${item.runId}`), ["48H:20261023T060000Z"]);
   assert.equal(result.deleteExecuted, false);
+});
+
+test("144H storage guard reserves indexed publication expansion, not only the download ceiling", () => {
+  assert.equal(GFS_ESTIMATED_144H_INDEXED_RUN_BYTES, 64 * 1024 * 1024);
+  const result = evaluateStorageProtection({
+    currentBytes: R2_STORAGE_STOP_BYTES - GFS_ESTIMATED_144H_INDEXED_RUN_BYTES,
+    estimatedNextRunBytes: GFS_ESTIMATED_144H_INDEXED_RUN_BYTES
+  });
+  assert.equal(result.status, "BLOCKED");
+  assert.equal(result.projectedBytes, R2_STORAGE_STOP_BYTES);
 });

@@ -7,7 +7,7 @@ import { CANARY_144H_STATUS_KEY, validateCanaryState } from "../src/canary-state
 import { indexV2ManifestKey, validateIndexV2Manifest } from "../src/indexes-v2.mjs";
 import { LATEST_144H_KEY } from "../src/publisher-144.mjs";
 import { r2Args, runAws, verifiedR2Environment } from "../src/r2-cli.mjs";
-import { evaluateStorageProtection } from "../src/storage-policy.mjs";
+import { evaluateStorageProtection, GFS_ESTIMATED_144H_INDEXED_RUN_BYTES } from "../src/storage-policy.mjs";
 
 if (!process.argv.includes("--execute")) throw new Error("R2_144H_REMOTE_EXECUTION_FLAG_REQUIRED");
 verifiedR2Environment();
@@ -64,7 +64,10 @@ async function inventory() {
 
 try {
   const usage = await inventory();
-  const storage = evaluateStorageProtection({ currentBytes: usage.bucketTotalBytes });
+  const storage = evaluateStorageProtection({
+    currentBytes: usage.bucketTotalBytes,
+    estimatedNextRunBytes: GFS_ESTIMATED_144H_INDEXED_RUN_BYTES
+  });
   if (storage.status !== "ALLOW") throw new Error(storage.reason);
   const latestObject = await remoteGet(LATEST_144H_KEY, "latest-144h.json");
   let publishedComplete = false;
