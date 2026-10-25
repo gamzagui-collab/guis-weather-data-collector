@@ -64,7 +64,8 @@ jobs:
               now: new Date(),
               collectorSchedule: { hours: [7, 19], minute: 17 },
               monitorSchedule: { hours: [11, 23], minute: 17 },
-              missingMs: 5 * 60 * 60 * 1000
+              missingMs: 5 * 60 * 60 * 1000,
+              activeSince: "2026-10-25T06:45:00Z"
             });
             async function jobsFor(run) {
               if (!run) return [];

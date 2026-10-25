@@ -59,10 +59,12 @@ export function evaluateScheduleMonitor({
   collectorSchedule = COLLECTOR_SCHEDULE,
   monitorSchedule = MONITOR_SCHEDULE,
   delayWarningMs = SCHEDULE_DELAY_WARNING_MS,
-  missingMs = SCHEDULE_MISSING_MS
+  missingMs = SCHEDULE_MISSING_MS,
+  activeSince = null
 }) {
   const nowIso = now instanceof Date ? now.toISOString() : new Date(instant(now, "SCHEDULE_MONITOR_NOW_INVALID")).toISOString();
   const nowMs = Date.parse(nowIso);
+  const activeSinceMs = activeSince === null ? null : instant(activeSince, "SCHEDULE_MONITOR_ACTIVE_SINCE_INVALID");
   const completed = normalizedRuns(collectorRuns);
   const scheduled = completed.filter((run) => run.event === "schedule");
   const manual = completed.filter((run) => run.event === "workflow_dispatch");
@@ -78,7 +80,8 @@ export function evaluateScheduleMonitor({
   const expectedCollectorSlot = expectedScheduleSlot(nowIso, collectorSchedule);
   const expectedCollectorAgeMs = Math.max(0, nowMs - Date.parse(expectedCollectorSlot));
   const collectorSlotObserved = lastScheduled?.scheduledFor === expectedCollectorSlot;
-  const collectorScheduleMissing = !collectorSlotObserved && expectedCollectorAgeMs > missingMs;
+  const collectorScheduleExpected = activeSinceMs === null || Date.parse(expectedCollectorSlot) >= activeSinceMs;
+  const collectorScheduleMissing = collectorScheduleExpected && !collectorSlotObserved && expectedCollectorAgeMs > missingMs;
 
   const currentScheduledMonitor = currentMonitorRun?.event === "schedule"
     && Number.isFinite(Date.parse(currentMonitorRun.created_at || currentMonitorRun.createdAt || ""))
@@ -92,7 +95,8 @@ export function evaluateScheduleMonitor({
   const expectedMonitorSlot = expectedScheduleSlot(nowIso, monitorSchedule);
   const expectedMonitorAgeMs = Math.max(0, nowMs - Date.parse(expectedMonitorSlot));
   const monitorSlotObserved = lastMonitorScheduled?.scheduledFor === expectedMonitorSlot;
-  const monitorScheduleMissing = !monitorSlotObserved && expectedMonitorAgeMs > missingMs;
+  const monitorScheduleExpected = activeSinceMs === null || Date.parse(expectedMonitorSlot) >= activeSinceMs;
+  const monitorScheduleMissing = monitorScheduleExpected && !monitorSlotObserved && expectedMonitorAgeMs > missingMs;
 
   const reasons = [];
   if (lastScheduled?.startDelayMs > delayWarningMs) reasons.push("COLLECTOR_SCHEDULE_START_DELAYED");
@@ -111,10 +115,12 @@ export function evaluateScheduleMonitor({
     lastManual,
     consecutiveScheduledFailures,
     expectedCollectorSlot,
+    collectorScheduleExpected,
     collectorSlotObserved,
     lastMonitorScheduled,
     currentMonitorRunObserved: Boolean(currentScheduledMonitor),
     expectedMonitorSlot,
+    monitorScheduleExpected,
     monitorSlotObserved
   };
 }

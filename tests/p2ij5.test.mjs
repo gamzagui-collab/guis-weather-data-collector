@@ -142,6 +142,22 @@ test("configured 144H monitor does not let manual success hide a missed schedule
   assert.ok(result.reasons.includes("COLLECTOR_SCHEDULE_EXECUTION_MISSING"));
 });
 
+test("144H monitor does not invent a missed slot before Canary activation", () => {
+  const result = evaluateScheduleMonitor({
+    now: "2026-10-25T05:13:00Z",
+    activeSince: "2026-10-25T06:45:00Z",
+    collectorSchedule: { hours: [7, 19], minute: 17 },
+    monitorSchedule: { hours: [11, 23], minute: 17 },
+    missingMs: 5 * 60 * 60 * 1000,
+    collectorRuns: [],
+    monitorRuns: []
+  });
+  assert.equal(result.collectorScheduleExpected, false);
+  assert.equal(result.monitorScheduleExpected, false);
+  assert.equal(result.status, "HEALTHY");
+  assert.deepEqual(result.reasons, []);
+});
+
 test("Canary scripts do not delete R2 objects or expose credentials", async () => {
   const [inspect, record, collector] = await Promise.all([
     read("scripts/inspect-r2-publication-144h.mjs"),
