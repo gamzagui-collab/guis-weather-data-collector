@@ -187,6 +187,9 @@ test("manual v3 backfill is NOAA-free, deletion-free, Preview-bucket locked and 
   assert.doesNotMatch(workflow, /schedule:/);
   assert.doesNotMatch(workflow, /nomads|collect-gfs-144h\.mjs|curl\s|wget\s/i);
   assert.match(workflow, /guis-weather-gfs-preview/);
+  assert.match(workflow, /AWS_ACCESS_KEY_ID:\s*\$\{\{ secrets\.R2_ACCESS_KEY_ID_V3 \}\}/);
+  assert.match(workflow, /AWS_SECRET_ACCESS_KEY:\s*\$\{\{ secrets\.R2_SECRET_ACCESS_KEY_V3 \}\}/);
+  assert.match(workflow, /AWS_DEFAULT_REGION:\s*auto/);
   assert.match(publisher, /guis-weather-gfs-preview/);
   assert.doesNotMatch(publisher, /delete_object|delete-object|Lifecycle/);
   assert.match(publisher, /R2_V3_IMMUTABLE_OBJECT_CONFLICT/);
