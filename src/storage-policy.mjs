@@ -3,8 +3,10 @@ export const R2_STORAGE_STOP_BYTES = 8 * 1024 * 1024 * 1024;
 export const GFS_ESTIMATED_INDEXED_RUN_BYTES = 20 * 1024 * 1024;
 // A 144H publication expands the filtered GRIB download into provenance-rich
 // forecast shards and window indexes. Keep its storage reservation independent
-// from the upstream download ceiling so the soft stop remains conservative.
-export const GFS_ESTIMATED_144H_INDEXED_RUN_BYTES = 64 * 1024 * 1024;
+// Measured 2026-10-26: source publication 51,939,755 bytes plus compact v5 index
+// 21,885,921 bytes = 73,825,676 bytes. Reserve 80 MiB per future indexed run
+// so the 8 GiB soft stop includes the complete source and derived index chain.
+export const GFS_ESTIMATED_144H_INDEXED_RUN_BYTES = 80 * 1024 * 1024;
 
 export function evaluateStorageProtection({
   currentBytes,

@@ -192,7 +192,7 @@ test("retention compares latest identity within its namespace", () => {
 });
 
 test("144H storage guard reserves indexed publication expansion, not only the download ceiling", () => {
-  assert.equal(GFS_ESTIMATED_144H_INDEXED_RUN_BYTES, 64 * 1024 * 1024);
+  assert.equal(GFS_ESTIMATED_144H_INDEXED_RUN_BYTES, 80 * 1024 * 1024);
   const result = evaluateStorageProtection({
     currentBytes: R2_STORAGE_STOP_BYTES - GFS_ESTIMATED_144H_INDEXED_RUN_BYTES,
     estimatedNextRunBytes: GFS_ESTIMATED_144H_INDEXED_RUN_BYTES

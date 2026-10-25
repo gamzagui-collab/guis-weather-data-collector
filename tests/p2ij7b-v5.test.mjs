@@ -131,3 +131,10 @@ test("manual v5 workflow is fixed-run, Preview-only, NOAA-free, deletion-free an
   assert.match(publisher, /R2_V5_IMMUTABLE_OBJECT_CONFLICT/);
   assert.match(publisher, /SOFT_STOP_BYTES/);
 });
+
+test("storage protection reserves the measured source plus compact v5 publication", async () => {
+  const policy = await readFile(new URL("../src/storage-policy.mjs", import.meta.url), "utf8");
+  assert.match(policy, /51,939,755 bytes plus compact v5 index/);
+  assert.match(policy, /21,885,921 bytes = 73,825,676 bytes/);
+  assert.match(policy, /80 \* 1024 \* 1024/);
+});
