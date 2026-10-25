@@ -335,5 +335,5 @@ test("publisher exposes manifest and latest SHA without logging credentials", as
 
 test("collector package version marks P2-I-J-7 preparation while the Canary remains active", async () => {
   const packageJson = JSON.parse(await read("package.json"));
-  assert.equal(packageJson.version, "0.9.0-p2ij7");
+  assert.equal(packageJson.version, "0.9.1-p2ij7a");
 });
