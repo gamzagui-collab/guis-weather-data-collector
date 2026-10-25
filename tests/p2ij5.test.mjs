@@ -5,6 +5,7 @@ import { evaluateCanaryPolicy } from "../src/canary-policy.mjs";
 import { mergeCanaryState } from "../src/canary-state.mjs";
 import { classifyDiscoveredRun } from "../src/run-state.mjs";
 import { evaluateScheduleMonitor } from "../src/schedule-monitor.mjs";
+import { buildRetentionDryRun } from "../src/cutover-readiness.mjs";
 
 const read = (relative) => readFile(new URL(`../${relative}`, import.meta.url), "utf8");
 const config = {
@@ -167,4 +168,20 @@ test("Canary scripts do not delete R2 objects or expose credentials", async () =
   for (const source of [inspect, record]) assert.doesNotMatch(source, /delete-object/);
   assert.match(collector, /CANARY_POLICY_BLOCKED_BEFORE_UPSTREAM/);
   assert.doesNotMatch(record, /console\.log\(process\.env|SECRET_ACCESS_KEY.*stdout/);
+});
+
+test("retention compares latest identity within its namespace", () => {
+  const result = buildRetentionDryRun({
+    currentBytes: 500,
+    latest48RunId: "20261025T000000Z",
+    latest144RunId: "20261023T060000Z",
+    runs: [
+      { namespace: "48H", runId: "20261025T000000Z", modelRunAt: "2026-10-25T00:00:00Z", objectCount: 1, bytes: 100, complete: true },
+      { namespace: "48H", runId: "20261024T180000Z", modelRunAt: "2026-10-24T18:00:00Z", objectCount: 1, bytes: 100, complete: true },
+      { namespace: "48H", runId: "20261023T060000Z", modelRunAt: "2026-10-23T06:00:00Z", objectCount: 1, bytes: 100, complete: true },
+      { namespace: "144H", runId: "20261023T060000Z", modelRunAt: "2026-10-23T06:00:00Z", objectCount: 1, bytes: 200, complete: true }
+    ]
+  });
+  assert.deepEqual(result.deleteCandidates.map((item) => `${item.namespace}:${item.runId}`), ["48H:20261023T060000Z"]);
+  assert.equal(result.deleteExecuted, false);
 });

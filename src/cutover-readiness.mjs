@@ -200,7 +200,8 @@ export function buildRetentionDryRun({ runs, latest48RunId, latest144RunId, curr
       reviewRequired.push({ ...item, reason: "STAGING_IDENTITY_UNCONFIRMED" });
     } else deleteCandidates.push({ ...item, reason: "EXPLICIT_INCOMPLETE_STAGING" });
   }
-  if (deleteCandidates.some((run) => run.runId === latest48RunId || run.runId === latest144RunId)) {
+  if (deleteCandidates.some((run) => (run.namespace === "48H" && run.runId === latest48RunId)
+    || (run.namespace === "144H" && run.runId === latest144RunId))) {
     throw new Error("GFS_RETENTION_LATEST_DELETE_BLOCKED");
   }
   const candidateBytes = deleteCandidates.reduce((sum, run) => sum + run.bytes, 0);
