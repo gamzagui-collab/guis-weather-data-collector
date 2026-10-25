@@ -37,7 +37,7 @@ jobs:
           endpoint="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
           mkdir -p source-store/horizons/144h
           aws s3api get-object --bucket "$R2_BUCKET" --key horizons/144h/latest.json \
-            source-store/horizons/144h/latest.json --endpoint-url "$endpoint" --no-cli-pager >/dev/null
+            source-store/horizons/144h/latest.json --endpoint-url "$endpoint" >/dev/null
           run_id="$(node -e "const fs=require('fs');const x=JSON.parse(fs.readFileSync('source-store/horizons/144h/latest.json','utf8'));if(!/^\\d{8}T\\d{6}Z$/.test(x.runId||''))throw Error('RUN_ID_INVALID');process.stdout.write(x.runId)")"
           aws s3 sync "s3://${R2_BUCKET}/horizons/144h/runs/${run_id}/" \
             "source-store/horizons/144h/runs/${run_id}/" --endpoint-url "$endpoint" --only-show-errors
