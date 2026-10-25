@@ -14,6 +14,7 @@ concurrency:
   # download the same NOAA cycle twice.
   group: guis-weather-gfs-noaa-collection
   cancel-in-progress: false
+  queue: max
 
 jobs:
   publication-state:

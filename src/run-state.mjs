@@ -8,7 +8,8 @@ export function classifyDiscoveredRun({
   discoveredModelRunAt,
   publishedModelRunAt = null,
   publishedComplete = false,
-  artifact = null
+  artifact = null,
+  collectionMode = "48H"
 }) {
   const discovered = instant(discoveredModelRunAt, "GFS_DISCOVERED_RUN_TIME_INVALID");
   const published = publishedModelRunAt ? instant(publishedModelRunAt, "GFS_PUBLISHED_RUN_TIME_INVALID") : null;
@@ -20,10 +21,13 @@ export function classifyDiscoveredRun({
     };
   }
   if (artifact) {
+    const artifactPattern = collectionMode === "144H"
+      ? /^gfs-144h-\d{8}T\d{6}Z$/
+      : /^gfs-48h-\d{8}T\d{6}Z$/;
     if (Date.parse(artifact.modelRunAt || discoveredModelRunAt) !== discovered
       || !/^\d+$/.test(String(artifact.workflowRunId || ""))
       || !/^[a-f0-9]{40}$/.test(String(artifact.commit || ""))
-      || !/^gfs-48h-\d{8}T\d{6}Z$/.test(String(artifact.name || ""))) {
+      || !artifactPattern.test(String(artifact.name || ""))) {
       throw new Error("GFS_EXISTING_ARTIFACT_IDENTITY_INVALID");
     }
     return {
@@ -38,4 +42,3 @@ export function classifyDiscoveredRun({
     action: "COLLECT"
   };
 }
-

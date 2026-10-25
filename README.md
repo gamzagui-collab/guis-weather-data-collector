@@ -1,5 +1,9 @@
 # guis-weather-data-collector
 
+The bounded 144H scheduled Canary and its real GitHub/R2 monitor are described
+in `docs/P2-I-J-5-144H-CANARY.md`. The public Weather service continues to use
+the independent 48H schedule during this Canary.
+
 This repository collects official NOAA/NCEP GFS 0.25 degree
 surface APCP GRIB2, decodes it with ecCodes, verifies its time/unit/grid
 contract, and publishes immutable JSON shards.

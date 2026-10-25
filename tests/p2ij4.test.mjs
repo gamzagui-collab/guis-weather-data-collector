@@ -104,12 +104,12 @@ test("48H and 144H operational evidence remains independently scoped", () => {
   assert.equal(delayed.status, "DELAYED");
 });
 
-test("prepared 144H automatic workflow is inactive, bounded and secret-separated", async () => {
+test("prepared 144H contract remains bounded and secret-separated after Canary activation", async () => {
   const [prepared, active48, manual144, monitor144] = await Promise.all([
-    readFile(new URL("../.github/workflows/collect-gfs-144h-automatic.yml.disabled", import.meta.url), "utf8"),
+    readFile(new URL("../.github/workflows/collect-gfs-144h-canary.yml", import.meta.url), "utf8"),
     readFile(new URL("../.github/workflows/collect-gfs-automatic.yml", import.meta.url), "utf8"),
     readFile(new URL("../.github/workflows/collect-gfs-144h-manual.yml", import.meta.url), "utf8"),
-    readFile(new URL("../.github/workflows/monitor-gfs-144h.yml.disabled", import.meta.url), "utf8")
+    readFile(new URL("../.github/workflows/monitor-gfs-144h.yml", import.meta.url), "utf8")
   ]);
   assert.match(prepared, /schedule:/);
   assert.match(prepared, /GFS_COLLECTION_MODE: "144H"/);
@@ -119,8 +119,8 @@ test("prepared 144H automatic workflow is inactive, bounded and secret-separated
   const collect = prepared.split(/^  collect:/m)[1].split(/^  publish:/m)[0];
   assert.doesNotMatch(collect, /R2_ACCESS_KEY|R2_SECRET_ACCESS_KEY|secrets\.R2/);
   for (const source of [prepared, active48, manual144]) assert.match(source, /group: guis-weather-gfs-noaa-collection/);
-  assert.match(monitor144, /GFS_MONITOR_HORIZON: "144H"/);
-  assert.doesNotMatch(monitor144, /^  schedule:/m);
+  assert.match(monitor144, /inspect-r2-publication-144h\.mjs --execute/);
+  assert.match(monitor144, /^  schedule:/m);
 });
 
 test("cutover audit is read-only, compares real descriptors and emits a retention dry run", async () => {

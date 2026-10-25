@@ -1,0 +1,93 @@
+name: Monitor GFS 144H Canary Freshness
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 11,23 * * *"
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: guis-weather-gfs-144h-schedule-monitor
+  cancel-in-progress: true
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID_V3 }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY_V3 }}
+      R2_BUCKET: guis-weather-gfs-preview
+      GFS_144H_CANARY_BASELINE_MODEL_RUN_AT: "2026-10-23T06:00:00Z"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --disable-pip-version-check awscli==1.42.58
+      - id: inspect
+        run: node scripts/inspect-r2-publication-144h.mjs --execute
+      - name: Check actual GitHub schedule and R2 publication state
+        uses: actions/github-script@v7
+        env:
+          R2_PUBLISHED_COMPLETE: ${{ steps.inspect.outputs.published_complete }}
+          R2_MODEL_RUN_AT: ${{ steps.inspect.outputs.published_model_run_at }}
+          R2_OBJECT_COUNT: ${{ steps.inspect.outputs.r2_object_count }}
+          R2_TOTAL_BYTES: ${{ steps.inspect.outputs.r2_total_bytes }}
+          CANARY_PUBLISHED_COUNT: ${{ steps.inspect.outputs.canary_published_count }}
+          CANARY_TOTAL_REQUESTS: ${{ steps.inspect.outputs.canary_total_noaa_requests }}
+          CANARY_TOTAL_BYTES: ${{ steps.inspect.outputs.canary_total_noaa_bytes }}
+          CANARY_LAST_OUTCOME: ${{ steps.inspect.outputs.canary_last_outcome }}
+          CANARY_LAST_EVENT: ${{ steps.inspect.outputs.canary_last_event }}
+          CANARY_LAST_RUN_ID: ${{ steps.inspect.outputs.canary_last_workflow_run_id }}
+        with:
+          script: |
+            const { pathToFileURL } = await import("node:url");
+            const { evaluateScheduleMonitor } = await import(pathToFileURL(`${process.env.GITHUB_WORKSPACE}/src/schedule-monitor.mjs`).href);
+            const { owner, repo } = context.repo;
+            const [collector, monitor] = await Promise.all([
+              github.rest.actions.listWorkflowRuns({ owner, repo, workflow_id: "collect-gfs-144h-canary.yml", per_page: 30 }),
+              github.rest.actions.listWorkflowRuns({ owner, repo, workflow_id: "monitor-gfs-144h.yml", per_page: 20 })
+            ]);
+            const currentMonitorRun = monitor.data.workflow_runs.find((run) => String(run.id) === String(context.runId)) || null;
+            const result = evaluateScheduleMonitor({
+              collectorRuns: collector.data.workflow_runs,
+              monitorRuns: monitor.data.workflow_runs,
+              currentMonitorRun,
+              now: new Date(),
+              collectorSchedule: { hours: [7, 19], minute: 17 },
+              monitorSchedule: { hours: [11, 23], minute: 17 },
+              missingMs: 5 * 60 * 60 * 1000
+            });
+            async function jobsFor(run) {
+              if (!run) return [];
+              const response = await github.rest.actions.listJobsForWorkflowRun({ owner, repo, run_id: Number(run.id), per_page: 100 });
+              return response.data.jobs;
+            }
+            const latestJobs = await jobsFor(result.lastScheduled);
+            const jobState = Object.fromEntries(latestJobs.map((job) => [job.name, job.conclusion]));
+            const published = process.env.R2_PUBLISHED_COMPLETE === "true";
+            await core.summary.addHeading("GFS 144H Canary monitor")
+              .addRaw(`Last scheduled run: ${result.lastScheduled?.createdAt || "none"}\n`)
+              .addRaw(`Last scheduled success: ${result.lastScheduledSuccess?.updatedAt || "none"}\n`)
+              .addRaw(`Last manual run: ${result.lastManual?.createdAt || "none"}\n`)
+              .addRaw(`Scheduled start delay minutes: ${result.lastScheduled ? (result.lastScheduled.startDelayMs / 60000).toFixed(1) : "n/a"}\n`)
+              .addRaw(`GitHub job state: ${JSON.stringify(jobState)}\n`)
+              .addRaw(`R2 COMPLETE: ${published}\n`)
+              .addRaw(`R2 modelRunAt: ${process.env.R2_MODEL_RUN_AT || "none"}\n`)
+              .addRaw(`R2 bucket objects/bytes: ${process.env.R2_OBJECT_COUNT}/${process.env.R2_TOTAL_BYTES}\n`)
+              .addRaw(`Canary publications: ${process.env.CANARY_PUBLISHED_COUNT}/2\n`)
+              .addRaw(`Canary NOAA requests/bytes: ${process.env.CANARY_TOTAL_REQUESTS}/${process.env.CANARY_TOTAL_BYTES}\n`)
+              .addRaw(`Canary last event/outcome/run: ${process.env.CANARY_LAST_EVENT || "none"}/${process.env.CANARY_LAST_OUTCOME || "none"}/${process.env.CANARY_LAST_RUN_ID || "none"}\n`)
+              .addRaw(`Monitor reasons: ${result.reasons.join(", ") || "none"}\n`).write();
+            if (!published) core.setFailed("GFS_144H_R2_PUBLICATION_NOT_COMPLETE");
+            if (result.reasons.includes("COLLECTOR_SCHEDULE_START_DELAYED")) core.warning("GFS_144H_SCHEDULE_START_DELAYED");
+            if (result.reasons.includes("MONITOR_SCHEDULE_START_DELAYED")) core.warning("GFS_144H_MONITOR_START_DELAYED");
+            if (result.status === "FAILED") core.setFailed(result.reasons.join(","));

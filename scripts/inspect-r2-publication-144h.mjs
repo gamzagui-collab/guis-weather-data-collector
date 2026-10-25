@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseJson, sha256 } from "../src/contracts.mjs";
 import { GFS_144H_NAMESPACE } from "../src/horizon-144.mjs";
+import { CANARY_144H_STATUS_KEY, validateCanaryState } from "../src/canary-state.mjs";
 import { indexV2ManifestKey, validateIndexV2Manifest } from "../src/indexes-v2.mjs";
 import { LATEST_144H_KEY } from "../src/publisher-144.mjs";
 import { r2Args, runAws, verifiedR2Environment } from "../src/r2-cli.mjs";
@@ -36,6 +37,7 @@ async function inventory() {
   let bucketTotalBytes = 0;
   let namespaceObjectCount = 0;
   let namespaceTotalBytes = 0;
+  const runManifestKeys = [];
   do {
     const args = ["--max-keys", "1000"];
     if (token) args.push("--continuation-token", token);
@@ -49,12 +51,15 @@ async function inventory() {
       if (String(item.Key).startsWith(`${GFS_144H_NAMESPACE}/`)) {
         namespaceObjectCount += 1;
         namespaceTotalBytes += size;
+        if (/^horizons\/144h\/runs\/[^/]+\/manifest\.json$/.test(String(item.Key))) {
+          runManifestKeys.push(String(item.Key));
+        }
       }
     }
     token = page.IsTruncated ? page.NextContinuationToken : null;
     if (page.IsTruncated && !token) throw new Error("R2_144H_INVENTORY_TOKEN_MISSING");
   } while (token);
-  return { bucketObjectCount, bucketTotalBytes, namespaceObjectCount, namespaceTotalBytes };
+  return { bucketObjectCount, bucketTotalBytes, namespaceObjectCount, namespaceTotalBytes, runManifestKeys };
 }
 
 try {
@@ -92,9 +97,33 @@ try {
     if (matches.some((value) => !value)) throw new Error("R2_144H_PUBLISHED_OBJECT_INTEGRITY_FAILED");
     publishedComplete = true;
   }
+  const baseline = process.env.GFS_144H_CANARY_BASELINE_MODEL_RUN_AT || null;
+  let canaryPublishedCount = 0;
+  if (baseline) {
+    const baselineMs = Date.parse(baseline);
+    if (!Number.isFinite(baselineMs)) throw new Error("R2_144H_CANARY_BASELINE_INVALID");
+    for (let index = 0; index < usage.runManifestKeys.length; index += 1) {
+      const manifestObject = await remoteGet(usage.runManifestKeys[index], `canary-manifest-${index}.json`);
+      if (!manifestObject || manifestObject.value.status !== "COMPLETE"
+        || manifestObject.value.namespace !== GFS_144H_NAMESPACE) continue;
+      if (Date.parse(manifestObject.value.modelRunAt) > baselineMs) canaryPublishedCount += 1;
+    }
+  }
+  const canaryObject = await remoteGet(CANARY_144H_STATUS_KEY, "canary-state.json");
+  const canaryState = canaryObject ? validateCanaryState(canaryObject.value) : null;
+  if (canaryState) canaryPublishedCount = Math.max(canaryPublishedCount, canaryState.successfulPublications.length);
   const result = { status: "R2_144H_PUBLICATION_INSPECTED", publishedComplete,
     runId: latest?.runId || null, modelRunAt: latest?.modelRunAt || null, latestValidAt: latest?.latestValidAt || null,
-    latestSha256, manifestSha256, indexManifestSha256, ...usage, storage };
+    latestSha256, manifestSha256, indexManifestSha256,
+    canary: {
+      publishedCount: canaryPublishedCount,
+      totalNoaaRequests: canaryState?.totalNoaaRequests || 0,
+      totalNoaaBytes: canaryState?.totalNoaaBytes || 0,
+      lastAttempt: canaryState?.lastAttempt || null,
+      startsAt: canaryState?.startsAt || null,
+      expiresAt: canaryState?.expiresAt || null
+    },
+    ...usage, storage };
   if (process.env.GITHUB_OUTPUT) {
     await appendFile(process.env.GITHUB_OUTPUT,
       `published_complete=${publishedComplete}\npublished_model_run_at=${result.modelRunAt || ""}\n`
@@ -102,6 +131,12 @@ try {
       + `r2_total_bytes=${usage.bucketTotalBytes}\nr2_144h_object_count=${usage.namespaceObjectCount}\n`
       + `r2_144h_total_bytes=${usage.namespaceTotalBytes}\nlatest_sha256=${latestSha256 || ""}\n`
       + `manifest_sha256=${manifestSha256 || ""}\nindex_manifest_sha256=${indexManifestSha256 || ""}\n`, "utf8");
+    await appendFile(process.env.GITHUB_OUTPUT,
+      `canary_published_count=${canaryPublishedCount}\ncanary_total_noaa_requests=${canaryState?.totalNoaaRequests || 0}\n`
+      + `canary_total_noaa_bytes=${canaryState?.totalNoaaBytes || 0}\n`
+      + `canary_last_outcome=${canaryState?.lastAttempt?.outcome || ""}\n`
+      + `canary_last_event=${canaryState?.lastAttempt?.eventName || ""}\n`
+      + `canary_last_workflow_run_id=${canaryState?.lastAttempt?.workflowRunId || ""}\n`, "utf8");
   }
   process.stdout.write(`${JSON.stringify(result)}\n`);
 } finally {

@@ -7,6 +7,7 @@ import { runCollectorWorkflow } from "../src/workflow.mjs";
 import { publishDataset144 } from "../src/publisher-144.mjs";
 import { assertGfs144ForecastHours } from "../src/horizon-144.mjs";
 import { classifyDiscoveredRun } from "../src/run-state.mjs";
+import { canaryPolicyFromEnvironment } from "../src/canary-policy.mjs";
 import {
   DownloadBudget, KOREA_BOUNDS, NOMADS_PRODUCT_DIRECTORY, downloadFrame,
   fetchText, listPublishedRuns, parseCycles, parseRunDates, verifyRunComplete
@@ -112,7 +113,8 @@ async function existingCollectedArtifact(run) {
     const trustedWorkflow = new Set([
       ".github/workflows/collect-gfs.yml",
       ".github/workflows/collect-gfs-automatic.yml",
-      ".github/workflows/collect-gfs-144h-manual.yml"
+      ".github/workflows/collect-gfs-144h-manual.yml",
+      ".github/workflows/collect-gfs-144h-canary.yml"
     ]).has(String(previousRun.path || "").split("@")[0]);
     const trustedEvent = new Set(["workflow_dispatch", "schedule"]).has(previousRun.event);
     if (previousRun.repository?.full_name === repository && previousRun.head_branch === "main"
@@ -150,6 +152,9 @@ async function collectDataset(run) {
 
 const attemptStartedAt = new Date().toISOString();
 let discoveredRun;
+const canaryPolicy = collectionMode === "144H"
+  ? canaryPolicyFromEnvironment(process.env, new Date(attemptStartedAt))
+  : { enabled: false, allowUpstream: true, status: "DISABLED" };
 
 function failureCode(error) {
   const code = String(error?.message || "GFS_COLLECTION_FAILED").split(":", 1)[0];
@@ -169,6 +174,7 @@ async function preserveEvidence({ status, result = null, error = null }) {
     forecastHours: requestedHours,
     modelRunAt: discoveredRun?.modelRunAt || null,
     result,
+    canary: canaryPolicy,
     budget: budget.snapshot(),
     failureCode: error ? failureCode(error) : null
   };
@@ -178,7 +184,23 @@ async function preserveEvidence({ status, result = null, error = null }) {
   return evidence;
 }
 
+async function writeOutputs({ modelRunKey = "", outcome = "", artifact = null } = {}) {
+  if (!process.env.GITHUB_OUTPUT) return;
+  const snapshot = budget.snapshot();
+  const artifactLines = artifact
+    ? `artifact_name=${artifact.name}\nartifact_run_id=${artifact.workflowRunId}\nartifact_head_sha=${artifact.commit}\n`
+    : "";
+  await appendFile(process.env.GITHUB_OUTPUT,
+    `model_run_key=${modelRunKey}\ncollection_outcome=${outcome}\nrequests_used=${snapshot.requestsUsed}\nbytes_used=${snapshot.bytesUsed}\n${artifactLines}`, "utf8");
+}
+
 try {
+  if (!canaryPolicy.allowUpstream) {
+    const result = { status: canaryPolicy.status, modelRunAt: null, publication: null,
+      reason: "CANARY_POLICY_BLOCKED_BEFORE_UPSTREAM" };
+    await preserveEvidence({ status: "SUCCESS", result });
+    await writeOutputs({ outcome: result.status });
+  } else {
   discoveredRun = await discoverRun();
   const artifact = await existingCollectedArtifact(discoveredRun);
   const publishedComplete = process.env.GFS_PUBLISHED_COMPLETE === "true";
@@ -186,7 +208,8 @@ try {
     discoveredModelRunAt: discoveredRun.modelRunAt,
     publishedModelRunAt: process.env.GFS_PUBLISHED_MODEL_RUN_AT || null,
     publishedComplete,
-    artifact
+    artifact,
+    collectionMode
   });
   let result;
   if (decision.action === "NOOP") {
@@ -206,12 +229,10 @@ try {
     }
   }
   await preserveEvidence({ status: "SUCCESS", result });
-  if (process.env.GITHUB_OUTPUT) {
-    const artifactLines = artifact ? `artifact_name=${artifact.name}\nartifact_run_id=${artifact.workflowRunId}\nartifact_head_sha=${artifact.commit}\n` : "";
-    await appendFile(process.env.GITHUB_OUTPUT,
-      `model_run_key=${runKey(discoveredRun)}\ncollection_outcome=${result.status}\n${artifactLines}`, "utf8");
+  await writeOutputs({ modelRunKey: runKey(discoveredRun), outcome: result.status, artifact });
   }
 } catch (error) {
   const evidence = await preserveEvidence({ status: "FAILED", error });
+  await writeOutputs({ modelRunKey: discoveredRun ? runKey(discoveredRun) : "", outcome: "COLLECTION_FAILED" });
   throw new Error(evidence.failureCode);
 }

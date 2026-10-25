@@ -51,14 +51,23 @@ function runSummary(run, schedule) {
   };
 }
 
-export function evaluateScheduleMonitor({ collectorRuns, monitorRuns = [], currentMonitorRun = null, now = new Date() }) {
+export function evaluateScheduleMonitor({
+  collectorRuns,
+  monitorRuns = [],
+  currentMonitorRun = null,
+  now = new Date(),
+  collectorSchedule = COLLECTOR_SCHEDULE,
+  monitorSchedule = MONITOR_SCHEDULE,
+  delayWarningMs = SCHEDULE_DELAY_WARNING_MS,
+  missingMs = SCHEDULE_MISSING_MS
+}) {
   const nowIso = now instanceof Date ? now.toISOString() : new Date(instant(now, "SCHEDULE_MONITOR_NOW_INVALID")).toISOString();
   const nowMs = Date.parse(nowIso);
   const completed = normalizedRuns(collectorRuns);
   const scheduled = completed.filter((run) => run.event === "schedule");
   const manual = completed.filter((run) => run.event === "workflow_dispatch");
-  const lastScheduled = runSummary(scheduled[0], COLLECTOR_SCHEDULE);
-  const lastScheduledSuccess = runSummary(scheduled.find((run) => run.conclusion === "success"), COLLECTOR_SCHEDULE);
+  const lastScheduled = runSummary(scheduled[0], collectorSchedule);
+  const lastScheduledSuccess = runSummary(scheduled.find((run) => run.conclusion === "success"), collectorSchedule);
   const lastManual = manual[0] ? {
     id: String(manual[0].id), conclusion: manual[0].conclusion,
     createdAt: manual[0].created_at || manual[0].createdAt,
@@ -66,10 +75,10 @@ export function evaluateScheduleMonitor({ collectorRuns, monitorRuns = [], curre
   } : null;
   const firstScheduledSuccessIndex = scheduled.findIndex((run) => run.conclusion === "success");
   const consecutiveScheduledFailures = firstScheduledSuccessIndex < 0 ? scheduled.length : firstScheduledSuccessIndex;
-  const expectedCollectorSlot = expectedScheduleSlot(nowIso, COLLECTOR_SCHEDULE);
+  const expectedCollectorSlot = expectedScheduleSlot(nowIso, collectorSchedule);
   const expectedCollectorAgeMs = Math.max(0, nowMs - Date.parse(expectedCollectorSlot));
   const collectorSlotObserved = lastScheduled?.scheduledFor === expectedCollectorSlot;
-  const collectorScheduleMissing = !collectorSlotObserved && expectedCollectorAgeMs > SCHEDULE_MISSING_MS;
+  const collectorScheduleMissing = !collectorSlotObserved && expectedCollectorAgeMs > missingMs;
 
   const currentScheduledMonitor = currentMonitorRun?.event === "schedule"
     && Number.isFinite(Date.parse(currentMonitorRun.created_at || currentMonitorRun.createdAt || ""))
@@ -79,17 +88,17 @@ export function evaluateScheduleMonitor({ collectorRuns, monitorRuns = [], curre
     ? [currentScheduledMonitor, ...monitorRuns.filter((run) => String(run?.id) !== String(currentScheduledMonitor.id))]
     : monitorRuns;
   const completedMonitors = normalizedRuns(monitorEvidence).filter((run) => run.event === "schedule");
-  const lastMonitorScheduled = runSummary(completedMonitors[0], MONITOR_SCHEDULE);
-  const expectedMonitorSlot = expectedScheduleSlot(nowIso, MONITOR_SCHEDULE);
+  const lastMonitorScheduled = runSummary(completedMonitors[0], monitorSchedule);
+  const expectedMonitorSlot = expectedScheduleSlot(nowIso, monitorSchedule);
   const expectedMonitorAgeMs = Math.max(0, nowMs - Date.parse(expectedMonitorSlot));
   const monitorSlotObserved = lastMonitorScheduled?.scheduledFor === expectedMonitorSlot;
-  const monitorScheduleMissing = !monitorSlotObserved && expectedMonitorAgeMs > SCHEDULE_MISSING_MS;
+  const monitorScheduleMissing = !monitorSlotObserved && expectedMonitorAgeMs > missingMs;
 
   const reasons = [];
-  if (lastScheduled?.startDelayMs > SCHEDULE_DELAY_WARNING_MS) reasons.push("COLLECTOR_SCHEDULE_START_DELAYED");
+  if (lastScheduled?.startDelayMs > delayWarningMs) reasons.push("COLLECTOR_SCHEDULE_START_DELAYED");
   if (collectorScheduleMissing) reasons.push("COLLECTOR_SCHEDULE_EXECUTION_MISSING");
   if (consecutiveScheduledFailures >= 2) reasons.push("COLLECTOR_CONSECUTIVE_SCHEDULE_FAILURES");
-  if (lastMonitorScheduled?.startDelayMs > SCHEDULE_DELAY_WARNING_MS) reasons.push("MONITOR_SCHEDULE_START_DELAYED");
+  if (lastMonitorScheduled?.startDelayMs > delayWarningMs) reasons.push("MONITOR_SCHEDULE_START_DELAYED");
   if (monitorScheduleMissing) reasons.push("MONITOR_SCHEDULE_EXECUTION_MISSING");
 
   return {
