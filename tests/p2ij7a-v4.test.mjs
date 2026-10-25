@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import { parseJson, sha256 } from "../src/contracts.mjs";
 import { GFS_144H_FORECAST_HOURS } from "../src/horizon-144.mjs";
 import { buildRangeIndexObjects, validateIndexV4Manifest, validateIndexV4Segment,
-  validateIndexV4Spatial } from "../src/indexes-v4.mjs";
+  validateIndexV4Route, validateIndexV4Spatial } from "../src/indexes-v4.mjs";
 import { buildRunObjects144 } from "../src/publisher-144.mjs";
 
 const iso = (base, hours) => new Date(Date.parse(base) + hours * 3_600_000).toISOString();
@@ -83,6 +83,17 @@ test("v4 spatial catalog anchors blob and range hashes while preserving exact co
   assert.equal(spatial.points[0].latitude, 33);
   assert.equal(spatial.points[0].longitude, 126);
   assert.equal(spatial.points[0].segments.at(-1).id, "compat-f001-f048");
+});
+
+test("v4 deterministic point routes remove the large spatial parse from cold Worker reads", () => {
+  const { publication, index } = plan();
+  assert.equal(index.routeObjects.length, 16);
+  const route = JSON.parse(index.routeObjects[0].body);
+  assert.equal(validateIndexV4Route(route, { runId: publication.runId,
+    sourceManifest: publication.latest.manifest, pointId: 0 }), route);
+  assert.equal(route.grid.ordering, "ROW_MAJOR");
+  assert.equal(route.segments.length, 7);
+  assert.equal(route.segments.reduce((sum, item) => sum + item.bytes, 0), route.blob.bytes);
 });
 
 test("manual v4 workflow is Preview-only NOAA-free deletion-free and schedule-free", async () => {

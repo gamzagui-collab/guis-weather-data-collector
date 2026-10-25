@@ -6,6 +6,7 @@ export const INDEX_V4_TILE_SIZE = 4;
 export const INDEX_V4_MANIFEST_SCHEMA = "weather.gfs.range-index-manifest.v4";
 export const INDEX_V4_SPATIAL_SCHEMA = "weather.gfs.range-spatial-catalog.v4";
 export const INDEX_V4_SEGMENT_SCHEMA = "weather.gfs.point-window-segment.v4";
+export const INDEX_V4_ROUTE_SCHEMA = "weather.gfs.point-range-route.v4";
 export const INDEX_V4_VALUE_SCHEMA = Object.freeze([
   "frameId", "forecastHour", "validAt", "accumulationStart", "accumulationEnd", "accumulationPeriod",
   "sourceUnit", "unit", "rawValue", "quantitativeValue", "status", "sourceDataSha256",
@@ -16,6 +17,7 @@ const prefixFor = (runId) => gfs144ScopedKey(`runs/${runId}/indexes/${INDEX_V4_V
 export const indexV4ManifestKey = (runId) => `${prefixFor(runId)}/manifest.json`;
 export const indexV4SpatialKey = (runId, tileId) => `${prefixFor(runId)}/spatial/${tileId}.json`;
 export const indexV4PointKey = (runId, pointId) => `${prefixFor(runId)}/points/p${String(pointId).padStart(4, "0")}.ndjson`;
+export const indexV4RouteKey = (runId, pointId) => `${prefixFor(runId)}/routes/p${String(pointId).padStart(4, "0")}.json`;
 
 function descriptor(value, code) {
   if (!value || typeof value.key !== "string" || !value.key.startsWith(`${GFS_144H_NAMESPACE}/`)
@@ -151,6 +153,23 @@ export function buildRangeIndexObjects({ runId, sourceManifest, grid, forecasts,
       sha256: sha256(body), segments };
   });
   const pointById = new Map(pointObjects.map((item) => [item.pointId, item]));
+  const routeObjects = shape.points.map((point, position) => {
+    const blob = pointById.get(point.id);
+    return { key: indexV4RouteKey(runId, point.id), pointId: point.id, ...encodeObject({
+      schemaVersion: INDEX_V4_ROUTE_SCHEMA,
+      status: "COMPLETE",
+      runId,
+      modelRunAt: grid.modelRunAt,
+      fetchedAt: grid.fetchedAt,
+      sourceManifest: source,
+      grid: { Ni: shape.columns, Nj: shape.rows, resolutionDegrees: grid.grid.resolutionDegrees,
+        minLatitude: shape.latitudes[0], minLongitude: shape.longitudes[0], ordering: "ROW_MAJOR" },
+      point: { pointId: point.id, gridRow: Math.floor(position / shape.columns), gridColumn: position % shape.columns,
+        latitude: point.latitude, longitude: point.longitude },
+      blob: { key: blob.key, bytes: blob.bytes, sha256: blob.sha256 },
+      segments: blob.segments
+    }) };
+  });
   const groups = new Map();
   for (let position = 0; position < shape.points.length; position += 1) {
     const point = shape.points[position];
@@ -203,7 +222,27 @@ export function buildRangeIndexObjects({ runId, sourceManifest, grid, forecasts,
     objectCount: spatialObjects.length + pointObjects.length
   };
   const manifestObject = { key: indexV4ManifestKey(runId), ...encodeObject(manifest) };
-  return { manifest, manifestObject, spatialObjects, pointObjects };
+  return { manifest, manifestObject, spatialObjects, pointObjects, routeObjects };
+}
+
+export function validateIndexV4Route(value, { runId, sourceManifest, pointId } = {}) {
+  if (value?.schemaVersion !== INDEX_V4_ROUTE_SCHEMA || value.status !== "COMPLETE" || value.runId !== runId
+    || !sameDescriptor(value.sourceManifest, sourceManifest) || value.point?.pointId !== pointId
+    || value.grid?.ordering !== "ROW_MAJOR" || !Number.isInteger(value.grid?.Ni) || value.grid.Ni < 1
+    || !Number.isInteger(value.grid?.Nj) || value.grid.Nj < 1 || !Number.isFinite(value.grid?.resolutionDegrees)
+    || !Number.isFinite(value.grid?.minLatitude) || !Number.isFinite(value.grid?.minLongitude)
+    || !Array.isArray(value.segments) || value.segments.length !== 7) {
+    throw new Error("GFS_INDEX_V4_ROUTE_INVALID");
+  }
+  descriptor(value.blob, "GFS_INDEX_V4_ROUTE_BLOB_INVALID");
+  let offset = 0;
+  for (const segment of value.segments) {
+    if (segment.offset !== offset || !Number.isSafeInteger(segment.bytes) || segment.bytes < 1
+      || !/^[a-f0-9]{64}$/.test(segment.sha256 || "")) throw new Error("GFS_INDEX_V4_ROUTE_RANGE_INVALID");
+    offset += segment.bytes;
+  }
+  if (offset !== value.blob.bytes) throw new Error("GFS_INDEX_V4_ROUTE_LENGTH_INVALID");
+  return value;
 }
 
 export function validateIndexV4Manifest(value, { runId, sourceManifest } = {}) {

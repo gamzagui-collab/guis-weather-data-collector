@@ -68,6 +68,18 @@ def main() -> None:
     expected[root_key] = {"key": root_key, "bytes": len(root_body), "sha256": digest(root_body)}
     if len(blob_keys) != root.get("pointBlobCount") or len(expected) != root.get("objectCount") + 1:
         raise RuntimeError("R2_V4_LOCAL_OBJECT_SET_INVALID")
+    route_root = index_root / f"horizons/144h/runs/{run_id}/indexes/v4/routes"
+    route_paths = sorted(route_root.glob("p*.json"))
+    if len(route_paths) != root.get("pointBlobCount"):
+        raise RuntimeError("R2_V4_ROUTE_SET_INVALID")
+    for route_path in route_paths:
+        key = route_path.relative_to(index_root).as_posix()
+        body = route_path.read_bytes()
+        value = json.loads(body)
+        if (value.get("schemaVersion") != "weather.gfs.point-range-route.v4"
+                or value.get("runId") != run_id or value.get("sourceManifest") != latest.get("manifest")):
+            raise RuntimeError("R2_V4_ROUTE_INVALID")
+        expected[key] = {"key": key, "bytes": len(body), "sha256": digest(body)}
     for key, item in expected.items():
         body = (index_root / Path(key)).read_bytes()
         if len(body) != item["bytes"] or digest(body) != item["sha256"]:

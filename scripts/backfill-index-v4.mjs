@@ -2,7 +2,7 @@ import { rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import { parseJson, sha256, validateForecastShard, validateGridShard } from "../src/contracts.mjs";
 import { buildRangeIndexObjects, validateIndexV4Manifest, validateIndexV4Segment,
-  validateIndexV4Spatial } from "../src/indexes-v4.mjs";
+  validateIndexV4Route, validateIndexV4Spatial } from "../src/indexes-v4.mjs";
 import { LocalObjectStore } from "../src/object-store.mjs";
 import { LATEST_144H_KEY } from "../src/publisher-144.mjs";
 
@@ -43,12 +43,19 @@ for (const item of plan.spatialObjects) {
     runId: latest.runId, sourceManifest: latest.manifest, descriptor: item
   });
 }
+for (const item of plan.routeObjects) {
+  await output.put(item.key, item.body);
+  validateIndexV4Route(parseJson(await output.get(item.key)), {
+    runId: latest.runId, sourceManifest: latest.manifest, pointId: item.pointId
+  });
+}
 await output.put(plan.manifestObject.key, plan.manifestObject.body, { atomic: true });
 validateIndexV4Manifest(parseJson(await output.get(plan.manifestObject.key)), {
   runId: latest.runId, sourceManifest: latest.manifest
 });
-const all = [...plan.pointObjects, ...plan.spatialObjects, plan.manifestObject];
+const all = [...plan.pointObjects, ...plan.spatialObjects, ...plan.routeObjects, plan.manifestObject];
 process.stdout.write(`${JSON.stringify({ status: "INDEX_V4_READY", runId: latest.runId,
   objectCount: all.length, spatialCatalogCount: plan.spatialObjects.length,
-  pointBlobCount: plan.pointObjects.length, totalBytes: all.reduce((sum, item) => sum + item.bytes, 0),
+  pointBlobCount: plan.pointObjects.length, routeCount: plan.routeObjects.length,
+  totalBytes: all.reduce((sum, item) => sum + item.bytes, 0),
   manifestBytes: plan.manifestObject.bytes, manifestSha256: plan.manifestObject.sha256 })}\n`);
