@@ -1,0 +1,61 @@
+name: Backfill GFS 144H Compact Index v5
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Exact verified 144H runId (yyyyMMddTHHmmssZ); must still be current 144H latest"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: guis-weather-gfs-r2-index-v5-publisher
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID_V3 }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY_V3 }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID_V3 }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY_V3 }}
+      AWS_DEFAULT_REGION: auto
+      R2_BUCKET: guis-weather-gfs-preview
+      FIXED_RUN_ID: ${{ inputs.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pinned R2 clients
+        run: python -m pip install --disable-pip-version-check awscli==1.42.58 boto3==1.40.58
+      - name: Download fixed verified 144H publication without NOAA access
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$FIXED_RUN_ID" =~ ^[0-9]{8}T[0-9]{6}Z$ ]] || { echo "Invalid fixed runId" >&2; exit 1; }
+          endpoint="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+          mkdir -p source-store/horizons/144h
+          aws s3api get-object --bucket "$R2_BUCKET" --key horizons/144h/latest.json \
+            source-store/horizons/144h/latest.json --endpoint-url "$endpoint" >/dev/null
+          current="$(node -e "const fs=require('fs');const x=JSON.parse(fs.readFileSync('source-store/horizons/144h/latest.json','utf8'));process.stdout.write(x.runId||'')")"
+          [[ "$current" == "$FIXED_RUN_ID" ]] || { echo "Fixed run is no longer latest; aborting without writes" >&2; exit 1; }
+          aws s3 sync "s3://${R2_BUCKET}/horizons/144h/runs/${FIXED_RUN_ID}/" \
+            "source-store/horizons/144h/runs/${FIXED_RUN_ID}/" --endpoint-url "$endpoint" \
+            --exclude "indexes/*" --only-show-errors
+      - name: Verify source and build compact v5 index locally
+        run: |
+          npm test
+          node scripts/backfill-index-v5.mjs --run-id "$FIXED_RUN_ID" \
+            --source-store source-store --output-store index-v5-package
+      - name: Publish immutable v5 objects and manifest last
+        run: python python/publish_index_v5.py --execute --run-id "$FIXED_RUN_ID" --index-store index-v5-package
