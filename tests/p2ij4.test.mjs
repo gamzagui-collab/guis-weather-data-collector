@@ -129,7 +129,7 @@ test("cutover audit is read-only, compares real descriptors and emits a retentio
     readFile(new URL("../.github/workflows/audit-gfs-cutover.yml", import.meta.url), "utf8")
   ]);
   assert.match(script, /compareSameRunOfficialContracts/);
-  assert.match(script, /buildRetentionDryRun/);
+  assert.match(script, /buildOperationalRetentionDryRun/);
   assert.match(script, /GFS_CUTOVER_SAME_MODEL_RUN_NOT_FOUND/);
   assert.doesNotMatch(script, /delete-object|put-object/);
   assert.match(workflow, /workflow_dispatch:/);

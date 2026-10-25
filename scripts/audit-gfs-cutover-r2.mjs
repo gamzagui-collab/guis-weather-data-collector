@@ -2,7 +2,8 @@ import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/pro
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseJson, sha256 } from "../src/contracts.mjs";
-import { buildRetentionDryRun, compareSameRunOfficialContracts } from "../src/cutover-readiness.mjs";
+import { compareSameRunOfficialContracts } from "../src/cutover-readiness.mjs";
+import { buildOperationalRetentionDryRun } from "../src/operational-retention.mjs";
 import { r2Args, runAws, verifiedR2Environment } from "../src/r2-cli.mjs";
 
 if (!process.argv.includes("--execute")) throw new Error("GFS_CUTOVER_REMOTE_EXECUTION_FLAG_REQUIRED");
@@ -76,7 +77,11 @@ async function mapLimit(values, limit, operation) {
 
 try {
   const inventory = await listInventory();
-  const [latest48Object, latest144Object] = await Promise.all([remoteGet("latest.json"), remoteGet("horizons/144h/latest.json")]);
+  const [latest48Object, latest144Object, canaryObject] = await Promise.all([
+    remoteGet("latest.json"),
+    remoteGet("horizons/144h/latest.json"),
+    remoteGet("horizons/144h/status/canary.json")
+  ]);
   if (!latest48Object || !latest144Object) throw new Error("GFS_CUTOVER_LATEST_POINTER_MISSING");
   const latest48 = latest48Object.value;
   const latest144 = latest144Object.value;
@@ -136,8 +141,12 @@ try {
     };
   });
   const currentBytes = inventory.reduce((sum, item) => sum + item.size, 0);
-  const retention = buildRetentionDryRun({ runs, latest48RunId: latest48.runId,
-    latest144RunId: latest144.runId, currentBytes });
+  const canary144RunIds = [...new Set((canaryObject?.value?.successfulPublications || [])
+    .map((item) => item?.runId).filter((runId) => /^\d{8}T\d{6}Z$/.test(runId || "")))];
+  const rollback48RunId = /^\d{8}T\d{6}Z$/.test(process.env.GFS_ROLLBACK_48_RUN_ID || "")
+    ? process.env.GFS_ROLLBACK_48_RUN_ID : latest48.runId;
+  const retention = buildOperationalRetentionDryRun({ runs, latest48RunId: latest48.runId,
+    latest144RunId: latest144.runId, currentBytes, rollback48RunId, canary144RunIds });
   const report = {
     status: "GFS_CUTOVER_AUDIT_PASS",
     generatedAt: new Date().toISOString(),
