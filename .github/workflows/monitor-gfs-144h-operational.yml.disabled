@@ -1,0 +1,80 @@
+name: Monitor GFS 144H Operational Freshness
+
+# P2-I-J-7 activation gate: this remains inert while its filename ends in .disabled.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 11,23 * * *"
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: guis-weather-gfs-144h-operational-monitor
+  cancel-in-progress: true
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID_V3 }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY_V3 }}
+      R2_BUCKET: guis-weather-gfs-preview
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --disable-pip-version-check awscli==1.42.58
+      - id: inspect
+        run: node scripts/inspect-r2-publication-144h.mjs --execute
+      - name: Separate scheduled execution, publication and freshness evidence
+        uses: actions/github-script@v7
+        env:
+          R2_PUBLISHED_COMPLETE: ${{ steps.inspect.outputs.published_complete }}
+          R2_MODEL_RUN_AT: ${{ steps.inspect.outputs.published_model_run_at }}
+          R2_LATEST_SHA256: ${{ steps.inspect.outputs.latest_sha256 }}
+          R2_TOTAL_BYTES: ${{ steps.inspect.outputs.r2_total_bytes }}
+        with:
+          script: |
+            const { pathToFileURL } = await import("node:url");
+            const { evaluateScheduleMonitor } = await import(pathToFileURL(`${process.env.GITHUB_WORKSPACE}/src/schedule-monitor.mjs`).href);
+            const { owner, repo } = context.repo;
+            const [collector, monitor] = await Promise.all([
+              github.rest.actions.listWorkflowRuns({ owner, repo, workflow_id: "collect-gfs-144h-operational.yml", per_page: 30 }),
+              github.rest.actions.listWorkflowRuns({ owner, repo, workflow_id: "monitor-gfs-144h-operational.yml", per_page: 20 })
+            ]);
+            const currentMonitorRun = monitor.data.workflow_runs.find((run) => String(run.id) === String(context.runId)) || null;
+            const result = evaluateScheduleMonitor({
+              collectorRuns: collector.data.workflow_runs,
+              monitorRuns: monitor.data.workflow_runs,
+              currentMonitorRun,
+              now: new Date(),
+              collectorSchedule: { hours: [7, 19], minute: 17 },
+              monitorSchedule: { hours: [11, 23], minute: 17 },
+              missingMs: 6 * 60 * 60 * 1000
+            });
+            const modelRunMs = Date.parse(process.env.R2_MODEL_RUN_AT || "");
+            const ageHours = Number.isFinite(modelRunMs) ? (Date.now() - modelRunMs) / 3600000 : Infinity;
+            const freshness = ageHours <= 14 ? "FRESH" : ageHours <= 20 ? "DELAYED" : "STALE";
+            const scheduledRuns = collector.data.workflow_runs.filter((run) => run.event === "schedule");
+            const lastPublishedRun = scheduledRuns.find((run) => run.status === "completed" && run.conclusion === "success") || null;
+            await core.summary.addHeading("GFS 144H operational monitor")
+              .addRaw(`Scheduled status: ${result.status}\n`)
+              .addRaw(`Last scheduled run: ${result.lastScheduled?.id || "none"}\n`)
+              .addRaw(`Last manual run: ${result.lastManual?.id || "none"}\n`)
+              .addRaw(`Last scheduled success: ${result.lastScheduledSuccess?.id || "none"}\n`)
+              .addRaw(`Publication state: ${process.env.R2_PUBLISHED_COMPLETE}/${process.env.R2_MODEL_RUN_AT || "none"}\n`)
+              .addRaw(`Latest SHA-256 present: ${/^[0-9a-f]{64}$/.test(process.env.R2_LATEST_SHA256 || "")}\n`)
+              .addRaw(`Freshness: ${freshness} (${Number.isFinite(ageHours) ? ageHours.toFixed(2) : "unknown"}h)\n`)
+              .addRaw(`Last successful scheduled workflow: ${lastPublishedRun?.id || "none"}\n`)
+              .addRaw(`Reasons: ${result.reasons.join(", ") || "none"}\n`).write();
+            if (process.env.R2_PUBLISHED_COMPLETE !== "true") core.setFailed("GFS_144H_R2_PUBLICATION_NOT_COMPLETE");
+            if (freshness === "STALE") core.setFailed("GFS_144H_DATA_STALE");
+            if (result.status === "FAILED") core.setFailed(result.reasons.join(","));

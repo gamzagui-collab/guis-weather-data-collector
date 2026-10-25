@@ -1,0 +1,24 @@
+name: NOAA GFS Collect and Publish 144H Operational
+
+# P2-I-J-7 activation gate: rename to .yml only after the scheduled-run,
+# Worker CPU/plan, public E2E, rollback, and retention gates all pass.
+on:
+  workflow_dispatch:
+  schedule:
+    # Two bounded attempts per day; deliberately not four until operations evidence supports expansion.
+    # Staggered from the existing 48H 05:37/11:37/17:37/23:37 UTC workflow.
+    - cron: "17 7,19 * * *"
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: guis-weather-gfs-noaa-collection
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  collect-and-publish:
+    uses: ./.github/workflows/collect-gfs-144h-manual.yml
+    secrets: inherit

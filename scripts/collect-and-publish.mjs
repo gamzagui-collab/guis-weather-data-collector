@@ -114,7 +114,8 @@ async function existingCollectedArtifact(run) {
       ".github/workflows/collect-gfs.yml",
       ".github/workflows/collect-gfs-automatic.yml",
       ".github/workflows/collect-gfs-144h-manual.yml",
-      ".github/workflows/collect-gfs-144h-canary.yml"
+      ".github/workflows/collect-gfs-144h-canary.yml",
+      ".github/workflows/collect-gfs-144h-operational.yml"
     ]).has(String(previousRun.path || "").split("@")[0]);
     const trustedEvent = new Set(["workflow_dispatch", "schedule"]).has(previousRun.event);
     if (previousRun.repository?.full_name === repository && previousRun.head_branch === "main"

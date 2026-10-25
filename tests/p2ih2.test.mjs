@@ -333,7 +333,7 @@ test("publisher exposes manifest and latest SHA without logging credentials", as
   assert.doesNotMatch(source, /console\.log\(process\.env|SECRET_ACCESS_KEY.*stdout/);
 });
 
-test("collector package version marks P2-I-J-6 preparation while the Canary remains active", async () => {
+test("collector package version marks P2-I-J-7 preparation while the Canary remains active", async () => {
   const packageJson = JSON.parse(await read("package.json"));
-  assert.equal(packageJson.version, "0.8.0-p2ij6");
+  assert.equal(packageJson.version, "0.9.0-p2ij7");
 });
