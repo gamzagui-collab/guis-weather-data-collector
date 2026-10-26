@@ -11,10 +11,12 @@ test("permanent 144H workflows are complete but inert until every cutover gate p
     read(".github/workflows/collect-gfs-144h-manual.yml")
   ]);
   assert.match(collector, /17 7,19 \* \* \*/);
-  assert.match(collector, /guis-weather-gfs-noaa-collection/);
+  assert.match(collector, /guis-weather-gfs-144h-operational-orchestrator/);
+  assert.doesNotMatch(collector, /group: guis-weather-gfs-noaa-collection/);
   assert.match(collector, /collect-gfs-144h-manual\.yml/);
   assert.match(collector, /secrets: inherit/);
   assert.match(manual, /workflow_call:/);
+  assert.match(manual, /group: guis-weather-gfs-noaa-collection/);
   assert.match(manual, /GFS_MAX_REQUESTS: "135"/);
   assert.match(manual, /GFS_MAX_DOWNLOAD_BYTES: "20971520"/);
   assert.match(manual, /publish-r2-144h\.mjs/);

@@ -176,3 +176,14 @@ test("Paid operational workflows remain disabled, bounded and source-v5 aware", 
   assert.match(publisher, /publicReadiness/);
   assert.match(remotePublisher, /v5_index_manifest_sha256=/);
 });
+
+test("operational caller cannot deadlock the reusable NOAA collector concurrency lock", async () => {
+  const [manual, operational] = await Promise.all([
+    readFile(new URL("../.github/workflows/collect-gfs-144h-manual.yml", import.meta.url), "utf8"),
+    readFile(new URL("../.github/workflows/collect-gfs-144h-operational.yml.disabled", import.meta.url), "utf8")
+  ]);
+  assert.match(manual, /group: guis-weather-gfs-noaa-collection/);
+  assert.match(operational, /group: guis-weather-gfs-144h-operational-orchestrator/);
+  assert.doesNotMatch(operational, /group: guis-weather-gfs-noaa-collection/);
+  assert.match(operational, /uses: \.\/\.github\/workflows\/collect-gfs-144h-manual\.yml/);
+});

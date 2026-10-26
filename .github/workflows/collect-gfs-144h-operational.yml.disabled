@@ -14,7 +14,11 @@ permissions:
   actions: read
 
 concurrency:
-  group: guis-weather-gfs-noaa-collection
+  # The reusable collector owns the shared NOAA lock. Reusing that same group
+  # here would make the called workflow wait behind its own caller. This
+  # separate group collapses duplicate operational orchestrators while the
+  # callee still serializes 48H, Canary, manual and operational NOAA access.
+  group: guis-weather-gfs-144h-operational-orchestrator
   cancel-in-progress: false
   queue: max
 
