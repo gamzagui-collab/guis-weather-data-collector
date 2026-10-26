@@ -17,6 +17,15 @@ import {
   validateIndexV2Manifest,
   validateIndexV2Tile
 } from "./indexes-v2.mjs";
+import {
+  buildCompactIndexObjects,
+  indexV5PublicationKey,
+  validateIndexV5Catalog,
+  validateIndexV5Manifest,
+  validateIndexV5PointMetadata,
+  validateIndexV5PointSegment,
+  validateIndexV5Publication
+} from "./indexes-v5.mjs";
 import { GFS_144H_NAMESPACE, assertGfs144ForecastHours, gfs144ScopedKey } from "./horizon-144.mjs";
 
 export const LATEST_144H_KEY = gfs144ScopedKey("latest.json");
@@ -28,6 +37,12 @@ async function verifyStoredObject(store, descriptor, validator) {
   const value = parseJson(body);
   if (validator) validator(value);
   return value;
+}
+
+async function verifyStoredBytes(store, descriptor) {
+  const body = await store.get(descriptor.key);
+  if (body.byteLength !== descriptor.bytes || sha256(body) !== descriptor.sha256) throw new Error("GFS_144H_OBJECT_INTEGRITY_FAILED");
+  return body;
 }
 
 export function buildRunObjects144(dataset) {
@@ -85,7 +100,29 @@ export function buildRunObjects144(dataset) {
     grid,
     forecasts: forecasts.map((value, index) => ({ descriptor: forecastObjects[index], value }))
   });
-  return { runId, gridObject, forecastObjects, manifest, manifestObject, indexPlan, latest };
+  const v5Plan = buildCompactIndexObjects({
+    runId,
+    sourceManifest: latest.manifest,
+    sourceGrid: manifest.grid,
+    grid,
+    forecasts: forecasts.map((value, index) => ({ descriptor: forecastObjects[index], value }))
+  });
+  latest.indexes = {
+    v2: { manifest: { key: indexPlan.manifestObject.key, sha256: indexPlan.manifestObject.sha256, bytes: indexPlan.manifestObject.bytes } },
+    v5: {
+      manifest: v5Plan.manifestDescriptor,
+      publication: { key: v5Plan.publicationObject.key, sha256: v5Plan.publicationObject.sha256,
+        bytes: v5Plan.publicationObject.bytes }
+    }
+  };
+  latest.publicReadiness = {
+    status: "COMPLETE",
+    sourceManifest: latest.manifest,
+    indexVersion: "v5",
+    indexManifest: v5Plan.manifestDescriptor,
+    noDerivedPrecipitation: true
+  };
+  return { runId, gridObject, forecastObjects, manifest, manifestObject, indexPlan, v5Plan, latest };
 }
 
 export async function publishDataset144(store, dataset, { now = new Date(), beforeLatestSwap } = {}) {
@@ -114,6 +151,38 @@ export async function publishDataset144(store, dataset, { now = new Date(), befo
     await verifyStoredObject(store, plan.indexPlan.manifestObject, (value) => validateIndexV2Manifest(value, {
       runId: plan.runId, sourceManifest: plan.latest.manifest
     }));
+    for (const item of plan.v5Plan.catalogObjects) await store.put(item.key, item.body);
+    for (const item of plan.v5Plan.catalogObjects) {
+      const window = plan.v5Plan.manifest.windows.find((value) => value.id === item.windowId);
+      await verifyStoredObject(store, item, (value) => validateIndexV5Catalog(value, {
+        runId: plan.runId, sourceManifest: plan.latest.manifest, window
+      }));
+    }
+    for (const item of plan.v5Plan.pointObjects) await store.put(item.key, item.body);
+    for (const item of plan.v5Plan.pointObjects) {
+      const body = await verifyStoredBytes(store, item);
+      const segments = validateIndexV5PointMetadata(item.customMetadata, {
+        pointObject: item, manifestDescriptor: plan.v5Plan.manifestDescriptor
+      });
+      for (const segment of segments) {
+        const window = plan.v5Plan.manifest.windows.find((value) => value.id === segment.id);
+        const value = parseJson(body.subarray(segment.offset, segment.offset + segment.bytes), "GFS_INDEX_V5_POINT_JSON_INVALID");
+        validateIndexV5PointSegment(value, {
+          runId: plan.runId, sourceManifest: plan.latest.manifest,
+          indexManifest: plan.v5Plan.manifestDescriptor,
+          point: { pointId: item.pointId, latitude: item.latitude, longitude: item.longitude }, window
+        });
+      }
+    }
+    await store.put(plan.v5Plan.manifestObject.key, plan.v5Plan.manifestObject.body);
+    await verifyStoredObject(store, plan.v5Plan.manifestObject, (value) => validateIndexV5Manifest(value, {
+      runId: plan.runId, sourceManifest: plan.latest.manifest, sourceGrid: plan.manifest.grid
+    }));
+    await store.put(plan.v5Plan.publicationObject.key, plan.v5Plan.publicationObject.body);
+    await verifyStoredObject(store, plan.v5Plan.publicationObject, (value) => validateIndexV5Publication(value, {
+      runId: plan.runId, sourceManifest: plan.latest.manifest, sourceGrid: plan.manifest.grid,
+      indexManifest: plan.v5Plan.manifestDescriptor
+    }));
     const status = encodeObject({
       schemaVersion: STATUS_SCHEMA,
       status: "SUCCESS",
@@ -125,7 +194,7 @@ export async function publishDataset144(store, dataset, { now = new Date(), befo
       coverage: plan.latest.coverage,
       attemptedAt: startedAt,
       completedAt: new Date(now).toISOString(),
-      publicationState: "READY_TO_PUBLISH",
+      publicationState: "SOURCE_AND_V5_READY_TO_PUBLISH",
       failureCode: null
     });
     await store.put(STATUS_144H_KEY, status.body, { atomic: true });
@@ -135,12 +204,15 @@ export async function publishDataset144(store, dataset, { now = new Date(), befo
     return {
       runId: plan.runId,
       latest: plan.latest,
-      objectCount: plan.forecastObjects.length + plan.indexPlan.tileObjects.length + 5,
+      objectCount: plan.forecastObjects.length + plan.indexPlan.tileObjects.length + plan.v5Plan.objectCount + 6,
       runBytes: plan.gridObject.bytes + plan.forecastObjects.reduce((sum, item) => sum + item.bytes, 0)
         + plan.indexPlan.tileObjects.reduce((sum, item) => sum + item.bytes, 0)
-        + plan.indexPlan.manifestObject.bytes + plan.manifestObject.bytes,
+        + plan.indexPlan.manifestObject.bytes + plan.manifestObject.bytes + plan.v5Plan.totalBytes
+        + plan.v5Plan.publicationObject.bytes,
       manifestSha256: plan.manifestObject.sha256,
-      indexManifestSha256: plan.indexPlan.manifestObject.sha256
+      indexManifestSha256: plan.indexPlan.manifestObject.sha256,
+      v5IndexManifestSha256: plan.v5Plan.manifestObject.sha256,
+      v5ObjectCount: plan.v5Plan.objectCount
     };
   } catch (error) {
     const failure = encodeObject({
@@ -179,6 +251,24 @@ export async function readLatestPublication144(store) {
   const index = parseJson(indexBody, "GFS_144H_INDEX_JSON_INVALID");
   validateIndexV2Manifest(index, { runId: latest.runId, sourceManifest: latest.manifest });
   return { latest, manifest, index };
+}
+
+export async function readLatestOperationalPublication144(store) {
+  const result = await readLatestPublication144(store);
+  const { latest, manifest } = result;
+  if (latest.publicReadiness?.status !== "COMPLETE" || latest.publicReadiness.indexVersion !== "v5"
+    || latest.publicReadiness.noDerivedPrecipitation !== true) throw new Error("GFS_144H_PUBLIC_READINESS_INVALID");
+  const v5Descriptor = latest.indexes?.v5?.manifest;
+  const publicationDescriptor = latest.indexes?.v5?.publication;
+  const v5Body = await verifyStoredBytes(store, v5Descriptor || {});
+  const v5 = parseJson(v5Body, "GFS_INDEX_V5_MANIFEST_JSON_INVALID");
+  validateIndexV5Manifest(v5, { runId: latest.runId, sourceManifest: latest.manifest, sourceGrid: manifest.grid });
+  const publicationBody = await verifyStoredBytes(store, publicationDescriptor || {});
+  const publication = parseJson(publicationBody, "GFS_INDEX_V5_PUBLICATION_JSON_INVALID");
+  validateIndexV5Publication(publication, {
+    runId: latest.runId, sourceManifest: latest.manifest, sourceGrid: manifest.grid, indexManifest: v5Descriptor
+  });
+  return { ...result, v5, publication };
 }
 
 export async function latestRunMatches144(store, modelRunAt) {

@@ -45,6 +45,11 @@ const budget = new DownloadBudget({
   maxRequests,
   maxBytes
 });
+const retryOptions = {
+  maxRetries: Number(process.env.GFS_NOAA_TRANSIENT_RETRIES ?? 2),
+  baseDelayMs: Number(process.env.GFS_NOAA_RETRY_BASE_DELAY_MS ?? 10_000),
+  maxDelayMs: Number(process.env.GFS_NOAA_RETRY_MAX_DELAY_MS ?? 40_000)
+};
 const store = new LocalObjectStore(storeRoot);
 
 function python(args) {
@@ -62,19 +67,19 @@ function python(args) {
 }
 
 async function discoverRun() {
-  const product = await fetchText(NOMADS_PRODUCT_DIRECTORY, budget);
+  const product = await fetchText(NOMADS_PRODUCT_DIRECTORY, budget, fetch, retryOptions);
   const dates = parseRunDates(product);
   if (!dates.length) throw new Error("GFS_PRODUCT_DIRECTORY_EMPTY");
   const candidateDates = dates.slice(-2);
   const cycles = {};
   for (const runDate of candidateDates) {
-    const cyclesHtml = await fetchText(new URL(`gfs.${runDate}/`, NOMADS_PRODUCT_DIRECTORY), budget);
+    const cyclesHtml = await fetchText(new URL(`gfs.${runDate}/`, NOMADS_PRODUCT_DIRECTORY), budget, fetch, retryOptions);
     cycles[runDate] = parseCycles(cyclesHtml);
   }
   const candidates = listPublishedRuns(candidateDates, cycles).reverse();
   for (const run of candidates) {
     if (budget.requestsUsed >= maxRequests - requestedHours.length) break;
-    if (await verifyRunComplete(run, Math.max(...requestedHours), budget)) return run;
+    if (await verifyRunComplete(run, Math.max(...requestedHours), budget, fetch, retryOptions)) return run;
   }
   if (collectionMode === "144H") throw new Error("GFS_NO_COMPLETE_144H_RUN_WITHIN_BUDGET");
   throw new Error("GFS_NO_COMPLETE_48H_RUN_WITHIN_BUDGET");
@@ -137,7 +142,7 @@ async function collectDataset(run) {
   const files = [];
   for (const forecastHour of requestedHours) {
     const destination = resolve(work, `gfs-${run.runDate}-${run.cycle}-f${String(forecastHour).padStart(3, "0")}.grib2`);
-    await downloadFrame({ run, forecastHour, destination, budget });
+    await downloadFrame({ run, forecastHour, destination, budget, retryOptions });
     files.push(destination);
   }
   const output = resolve(work, "gfs-grid.json");

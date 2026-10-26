@@ -1,6 +1,6 @@
 name: Monitor GFS 144H Operational Freshness
 
-# P2-I-J-7 activation gate: this remains inert while its filename ends in .disabled.
+# P2-I-J-8 activation gate: this remains inert while its filename ends in .disabled.
 on:
   workflow_dispatch:
   schedule:
@@ -41,6 +41,8 @@ jobs:
           R2_MODEL_RUN_AT: ${{ steps.inspect.outputs.published_model_run_at }}
           R2_LATEST_SHA256: ${{ steps.inspect.outputs.latest_sha256 }}
           R2_TOTAL_BYTES: ${{ steps.inspect.outputs.r2_total_bytes }}
+          R2_PUBLIC_READY: ${{ steps.inspect.outputs.public_ready }}
+          R2_V5_SHA256: ${{ steps.inspect.outputs.v5_index_manifest_sha256 }}
         with:
           script: |
             const { pathToFileURL } = await import("node:url");
@@ -72,9 +74,12 @@ jobs:
               .addRaw(`Last scheduled success: ${result.lastScheduledSuccess?.id || "none"}\n`)
               .addRaw(`Publication state: ${process.env.R2_PUBLISHED_COMPLETE}/${process.env.R2_MODEL_RUN_AT || "none"}\n`)
               .addRaw(`Latest SHA-256 present: ${/^[0-9a-f]{64}$/.test(process.env.R2_LATEST_SHA256 || "")}\n`)
+              .addRaw(`Source+v5 public readiness: ${process.env.R2_PUBLIC_READY}\n`)
+              .addRaw(`v5 SHA-256 present: ${/^[0-9a-f]{64}$/.test(process.env.R2_V5_SHA256 || "")}\n`)
               .addRaw(`Freshness: ${freshness} (${Number.isFinite(ageHours) ? ageHours.toFixed(2) : "unknown"}h)\n`)
               .addRaw(`Last successful scheduled workflow: ${lastPublishedRun?.id || "none"}\n`)
               .addRaw(`Reasons: ${result.reasons.join(", ") || "none"}\n`).write();
             if (process.env.R2_PUBLISHED_COMPLETE !== "true") core.setFailed("GFS_144H_R2_PUBLICATION_NOT_COMPLETE");
+            if (process.env.R2_PUBLIC_READY !== "true") core.setFailed("GFS_144H_V5_PUBLIC_READINESS_NOT_COMPLETE");
             if (freshness === "STALE") core.setFailed("GFS_144H_DATA_STALE");
             if (result.status === "FAILED") core.setFailed(result.reasons.join(","));

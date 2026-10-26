@@ -5,6 +5,7 @@ export const INDEX_V5_VERSION = "v5";
 export const INDEX_V5_MANIFEST_SCHEMA = "weather.gfs.compact-index-manifest.v5";
 export const INDEX_V5_CATALOG_SCHEMA = "weather.gfs.contract-catalog.v5";
 export const INDEX_V5_POINT_SCHEMA = "weather.gfs.point-values.v5";
+export const INDEX_V5_PUBLICATION_SCHEMA = "weather.gfs.compact-index-publication.v5";
 export const INDEX_V5_CONTRACT_SCHEMA = Object.freeze([
   "contractId", "forecastHour", "validAt", "accumulationStart", "accumulationEnd",
   "accumulationPeriod", "sourceUnit", "unit", "sourceDataSha256", "sourceShardKey",
@@ -18,6 +19,7 @@ const prefixFor = (runId) => gfs144ScopedKey(`runs/${runId}/indexes/${INDEX_V5_V
 export const indexV5ManifestKey = (runId) => `${prefixFor(runId)}/manifest.json`;
 export const indexV5CatalogKey = (runId, windowId) => `${prefixFor(runId)}/catalogs/${windowId}.json`;
 export const indexV5PointKey = (runId, pointId) => `${prefixFor(runId)}/points/p${String(pointId).padStart(4, "0")}.bin`;
+export const indexV5PublicationKey = (runId) => `${prefixFor(runId)}/publication.json`;
 
 function descriptor(value, code) {
   if (!value || typeof value.key !== "string" || !value.key.startsWith(`${GFS_144H_NAMESPACE}/`)
@@ -236,10 +238,54 @@ export function buildCompactIndexObjects({ runId, sourceManifest, sourceGrid, gr
       sha256: sha256(body), segments };
     return { ...item, customMetadata: pointMetadata(item, manifestDescriptor) };
   });
+  const publication = {
+    schemaVersion: INDEX_V5_PUBLICATION_SCHEMA,
+    status: "COMPLETE",
+    runId,
+    sourceManifest: source,
+    sourceGrid: gridSource,
+    indexManifest: manifestDescriptor,
+    objectCount: 1 + catalogObjects.length + pointObjects.length,
+    totalBytes: manifestObject.bytes + catalogObjects.reduce((sum, item) => sum + item.bytes, 0)
+      + pointObjects.reduce((sum, item) => sum + item.bytes, 0),
+    objects: [
+      ...catalogObjects.map(({ body, windowId, contractCount, ...item }) => ({ ...item, contentType: "application/json" })),
+      ...pointObjects.map(({ body, ...item }) => ({
+        key: item.key, bytes: item.bytes, sha256: item.sha256,
+        contentType: "application/octet-stream", customMetadata: item.customMetadata
+      })),
+      { key: manifestObject.key, bytes: manifestObject.bytes, sha256: manifestObject.sha256, contentType: "application/json" }
+    ]
+  };
+  const publicationObject = { key: indexV5PublicationKey(runId), ...encodeObject(publication) };
   return { manifest, manifestObject, manifestDescriptor, catalogObjects, pointObjects,
+    publication, publicationObject,
     objectCount: 1 + catalogObjects.length + pointObjects.length,
     totalBytes: manifestObject.bytes + catalogObjects.reduce((sum, item) => sum + item.bytes, 0)
       + pointObjects.reduce((sum, item) => sum + item.bytes, 0) };
+}
+
+export function validateIndexV5Publication(value, { runId, sourceManifest, sourceGrid, indexManifest } = {}) {
+  if (value?.schemaVersion !== INDEX_V5_PUBLICATION_SCHEMA || value.status !== "COMPLETE" || value.runId !== runId
+    || !sameDescriptor(value.sourceManifest, sourceManifest) || !sameDescriptor(value.sourceGrid, sourceGrid)
+    || !sameDescriptor(value.indexManifest, indexManifest) || !Array.isArray(value.objects)
+    || value.objectCount !== value.objects.length || !Number.isSafeInteger(value.totalBytes) || value.totalBytes < 1
+    || value.objects.reduce((sum, item) => sum + item.bytes, 0) !== value.totalBytes) {
+    throw new Error("GFS_INDEX_V5_PUBLICATION_INVALID");
+  }
+  const keys = new Set();
+  for (const item of value.objects) {
+    descriptor(item, "GFS_INDEX_V5_PUBLICATION_DESCRIPTOR_INVALID");
+    if (keys.has(item.key) || !["application/json", "application/octet-stream"].includes(item.contentType)) {
+      throw new Error("GFS_INDEX_V5_PUBLICATION_OBJECT_INVALID");
+    }
+    if (item.contentType === "application/octet-stream" && (!item.customMetadata || !item.customMetadata.segments)) {
+      throw new Error("GFS_INDEX_V5_PUBLICATION_METADATA_INVALID");
+    }
+    keys.add(item.key);
+  }
+  if (!keys.has(indexManifest.key)) throw new Error("GFS_INDEX_V5_PUBLICATION_MANIFEST_MISSING");
+  return value;
 }
 
 export function validateIndexV5Manifest(value, { runId, sourceManifest, sourceGrid } = {}) {

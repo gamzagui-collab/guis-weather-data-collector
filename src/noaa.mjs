@@ -5,6 +5,12 @@ export const NOMADS_PRODUCT_DIRECTORY = "https://nomads.ncep.noaa.gov/pub/data/n
 export const NOMADS_FILTER_ORIGIN = "https://nomads.ncep.noaa.gov";
 export const KOREA_BOUNDS = Object.freeze({ left: 124.5, right: 132, bottom: 32, top: 39.5 });
 export const MINIMUM_REQUEST_INTERVAL_MS = 10_000;
+export const TRANSIENT_HTTP_STATUSES = Object.freeze([500, 502, 503, 504]);
+export const DEFAULT_TRANSIENT_RETRY = Object.freeze({
+  maxRetries: 2,
+  baseDelayMs: MINIMUM_REQUEST_INTERVAL_MS,
+  maxDelayMs: 40_000
+});
 
 export class DownloadBudget {
   constructor({ maxRequests, maxBytes, minimumIntervalMs = MINIMUM_REQUEST_INTERVAL_MS }) {
@@ -17,12 +23,13 @@ export class DownloadBudget {
   }
   async beforeRequest(now = Date.now(), sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))) {
     if (this.requestsUsed >= this.maxRequests) throw new Error("GFS_REQUEST_BUDGET_EXCEEDED");
+    let wait = 0;
     if (this.lastRequestAt !== null) {
-      const wait = this.minimumIntervalMs - (now - this.lastRequestAt);
+      wait = this.minimumIntervalMs - (now - this.lastRequestAt);
       if (wait > 0) await sleep(wait);
     }
     this.requestsUsed += 1;
-    this.lastRequestAt = Date.now();
+    this.lastRequestAt = now + Math.max(0, wait);
   }
   assertLength(value) {
     if (value === null || value === undefined || value === "") return;
@@ -104,33 +111,88 @@ async function responseBytes(response, budget) {
   return Buffer.concat(chunks);
 }
 
-export async function fetchText(url, budget, fetchImpl = fetch) {
-  await budget.beforeRequest();
-  const response = await fetchImpl(url, { redirect: "manual", headers: { Accept: "text/html" } });
-  if (response.status !== 200) throw new Error(`GFS_HTTP_${response.status}`);
+function retryConfiguration(value = {}) {
+  const options = { ...DEFAULT_TRANSIENT_RETRY, ...value };
+  if (!Number.isInteger(options.maxRetries) || options.maxRetries < 0 || options.maxRetries > 4
+    || !Number.isSafeInteger(options.baseDelayMs) || options.baseDelayMs < MINIMUM_REQUEST_INTERVAL_MS
+    || !Number.isSafeInteger(options.maxDelayMs) || options.maxDelayMs < options.baseDelayMs || options.maxDelayMs > 120_000) {
+    throw new Error("GFS_TRANSIENT_RETRY_CONFIGURATION_INVALID");
+  }
+  return options;
+}
+
+function statusFailure(prefix, status, exhausted = false) {
+  if (status === 403) return `${prefix}_403_FORBIDDEN`;
+  if (status === 404) return `${prefix}_404_NOT_FOUND`;
+  if (exhausted) return `${prefix}_${status}_RETRY_EXHAUSTED`;
+  return `${prefix}_${status}`;
+}
+
+async function accountRejectedResponse(response, budget) {
+  const declared = response.headers?.get?.("content-length");
+  if (declared !== null && declared !== undefined && declared !== "") {
+    budget.assertLength(declared);
+    budget.consume(Number(declared));
+  }
+  await response.body?.cancel?.();
+}
+
+export async function fetchWithTransientRetry({
+  url, budget, fetchImpl = fetch, options, acceptedStatuses = [200], errorPrefix = "GFS_HTTP",
+  retry = {}, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), now = Date.now
+}) {
+  const configured = retryConfiguration(retry);
+  const accepted = new Set(acceptedStatuses);
+  for (let attempt = 0; attempt <= configured.maxRetries; attempt += 1) {
+    try {
+      await budget.beforeRequest(now(), sleep);
+    } catch (error) {
+      if (attempt > 0 && error?.message === "GFS_REQUEST_BUDGET_EXCEEDED") {
+        throw new Error("GFS_TRANSIENT_RETRY_BUDGET_EXHAUSTED");
+      }
+      throw error;
+    }
+    const response = await fetchImpl(url, options);
+    if (accepted.has(response.status)) return response;
+    const transient = TRANSIENT_HTTP_STATUSES.includes(response.status);
+    const exhausted = transient && attempt === configured.maxRetries;
+    await accountRejectedResponse(response, budget);
+    if (!transient || exhausted) throw new Error(statusFailure(errorPrefix, response.status, exhausted));
+    const delay = Math.min(configured.maxDelayMs, configured.baseDelayMs * (2 ** attempt));
+    await sleep(delay);
+  }
+  throw new Error(`${errorPrefix}_RETRY_STATE_INVALID`);
+}
+
+export async function fetchText(url, budget, fetchImpl = fetch, retryOptions = {}) {
+  const response = await fetchWithTransientRetry({
+    url, budget, fetchImpl, retry: retryOptions,
+    options: { redirect: "manual", headers: { Accept: "text/html" } }
+  });
   return new TextDecoder("utf-8", { fatal: true }).decode(await responseBytes(response, budget));
 }
 
-export async function verifyRunComplete(run, finalForecastHour, budget, fetchImpl = fetch) {
-  await budget.beforeRequest();
-  const response = await fetchImpl(buildRawIndexUrl({ ...run, forecastHour: finalForecastHour }), {
-    method: "GET",
-    redirect: "manual",
-    headers: { Accept: "text/plain", Range: "bytes=0-0" }
-  });
-  if (response.status === 404) return false;
-  if (response.status !== 200 && response.status !== 206) throw new Error(`GFS_INDEX_HTTP_${response.status}`);
-  await response.body?.cancel?.();
-  return true;
+export async function verifyRunComplete(run, finalForecastHour, budget, fetchImpl = fetch, retryOptions = {}) {
+  let response;
+  try {
+    response = await fetchWithTransientRetry({
+      url: buildRawIndexUrl({ ...run, forecastHour: finalForecastHour }), budget, fetchImpl,
+      acceptedStatuses: [200, 206, 404], errorPrefix: "GFS_INDEX_HTTP", retry: retryOptions,
+      options: { method: "GET", redirect: "manual", headers: { Accept: "text/plain", Range: "bytes=0-0" } }
+    });
+  } catch (error) {
+    throw error;
+  }
+  const available = response.status !== 404;
+  await accountRejectedResponse(response, budget);
+  return available;
 }
 
-export async function downloadFrame({ run, forecastHour, destination, budget, fetchImpl = fetch }) {
-  await budget.beforeRequest();
-  const response = await fetchImpl(buildFilterUrl({ ...run, forecastHour }), {
-    redirect: "manual",
-    headers: { Accept: "application/octet-stream, application/x-grib2" }
+export async function downloadFrame({ run, forecastHour, destination, budget, fetchImpl = fetch, retryOptions = {} }) {
+  const response = await fetchWithTransientRetry({
+    url: buildFilterUrl({ ...run, forecastHour }), budget, fetchImpl, retry: retryOptions,
+    options: { redirect: "manual", headers: { Accept: "application/octet-stream, application/x-grib2" } }
   });
-  if (response.status !== 200) throw new Error(`GFS_HTTP_${response.status}`);
   const body = await responseBytes(response, budget);
   if (body.byteLength < 20 || body.subarray(0, 4).toString("ascii") !== "GRIB" || body.subarray(-4).toString("ascii") !== "7777") {
     throw new Error("GFS_GRIB_ENVELOPE_INVALID");

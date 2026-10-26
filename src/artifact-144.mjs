@@ -3,8 +3,9 @@ import { resolve, sep } from "node:path";
 import { canonicalJson, parseJson, sha256 } from "./contracts.mjs";
 import { GFS_144H_NAMESPACE } from "./horizon-144.mjs";
 import { indexV2ManifestKey, validateIndexV2Manifest, validateIndexV2Tile } from "./indexes-v2.mjs";
+import { validateIndexV5Publication } from "./indexes-v5.mjs";
 import { LocalObjectStore } from "./object-store.mjs";
-import { LATEST_144H_KEY, STATUS_144H_KEY, readLatestPublication144 } from "./publisher-144.mjs";
+import { LATEST_144H_KEY, STATUS_144H_KEY, readLatestOperationalPublication144 } from "./publisher-144.mjs";
 
 export const ARTIFACT_144H_SCHEMA = "weather.gfs.collector-artifact.144h.v1";
 export const ARTIFACT_144H_METADATA = "metadata.json";
@@ -40,7 +41,7 @@ export async function createPublicationArtifact144({ storeRoot, artifactRoot, pr
   const commit = exactIdentity(provenance?.commit, /^[a-f0-9]{40}$/, "GFS_144H_ARTIFACT_COMMIT_INVALID");
   const workflowRunId = exactIdentity(provenance?.workflowRunId, /^\d+$/, "GFS_144H_ARTIFACT_RUN_ID_INVALID");
   const source = new LocalObjectStore(storeRoot);
-  const { latest, manifest, index } = await readLatestPublication144(source);
+  const { latest, manifest, index, v5, publication } = await readLatestOperationalPublication144(source);
   const indexBody = await source.get(indexV2ManifestKey(latest.runId));
   const statusBody = await source.get(STATUS_144H_KEY);
   const status = parseJson(statusBody, "GFS_144H_ARTIFACT_STATUS_INVALID");
@@ -52,18 +53,27 @@ export async function createPublicationArtifact144({ storeRoot, artifactRoot, pr
     const body = await readVerified(source, item, "GFS_144H_ARTIFACT_INDEX_INTEGRITY_FAILED");
     validateIndexV2Tile(parseJson(body), { runId: latest.runId, sourceManifest: latest.manifest, descriptor: item });
   }
-  const keys = [manifest.grid.key, ...manifest.forecasts.map((item) => item.key),
+  const baseKeys = [manifest.grid.key, ...manifest.forecasts.map((item) => item.key),
     ...tileDescriptors.map((item) => item.key), indexV2ManifestKey(latest.runId), latest.manifest.key,
-    STATUS_144H_KEY, LATEST_144H_KEY];
+    STATUS_144H_KEY, LATEST_144H_KEY, latest.indexes.v5.publication.key];
+  validateIndexV5Publication(publication, {
+    runId: latest.runId, sourceManifest: latest.manifest, sourceGrid: manifest.grid,
+    indexManifest: latest.indexes.v5.manifest
+  });
+  const keys = [...baseKeys, ...publication.objects.map((item) => item.key)];
   if (new Set(keys).size !== keys.length || keys.some((key) => !key.startsWith(`${GFS_144H_NAMESPACE}/`))) {
     throw new Error("GFS_144H_ARTIFACT_FILE_SET_INVALID");
   }
   const destination = new LocalObjectStore(artifactPath(artifactRoot, ARTIFACT_144H_PAYLOAD));
   await rm(resolve(artifactRoot), { recursive: true, force: true });
   const objects = [];
+  const v5Descriptors = new Map(publication.objects.map((item) => [item.key, item]));
   for (const key of keys) {
     const body = await source.get(key);
-    const object = { key, bytes: body.byteLength, sha256: sha256(body) };
+    const v5Descriptor = v5Descriptors.get(key);
+    const object = { key, bytes: body.byteLength, sha256: sha256(body),
+      contentType: v5Descriptor?.contentType || "application/json",
+      ...(v5Descriptor?.customMetadata ? { customMetadata: v5Descriptor.customMetadata } : {}) };
     await destination.put(key, body);
     objects.push(object);
   }
@@ -83,6 +93,8 @@ export async function createPublicationArtifact144({ storeRoot, artifactRoot, pr
       bytes: indexBody.byteLength,
       sha256: sha256(indexBody)
     },
+    v5IndexManifest: latest.indexes.v5.manifest,
+    v5Publication: latest.indexes.v5.publication,
     coverage: latest.coverage,
     objectCount: objects.length,
     objects
@@ -114,7 +126,7 @@ export async function verifyPublicationArtifact144({ artifactRoot, expected }) {
     }
     await readVerified(store, descriptor, "GFS_144H_ARTIFACT_INTEGRITY_FAILED");
   }
-  const { latest, manifest, index } = await readLatestPublication144(store);
+  const { latest, manifest, index, v5, publication } = await readLatestOperationalPublication144(store);
   if (latest.runId !== metadata.runId || latest.manifest.sha256 !== metadata.manifest.sha256
     || manifest.status !== "COMPLETE" || index.status !== "COMPLETE") {
     throw new Error("GFS_144H_ARTIFACT_PUBLICATION_MISMATCH");
@@ -127,5 +139,10 @@ export async function verifyPublicationArtifact144({ artifactRoot, expected }) {
   }
   const f012 = manifest.forecasts.filter((item) => item.forecastHour === 12).map((item) => item.accumulationPeriod).sort();
   if (!f012.includes("PT12H") || !f012.includes("PT6H")) throw new Error("GFS_144H_ARTIFACT_F012_CONTRACT_INVALID");
-  return { metadata, latest, manifest, index };
+  if (metadata.v5IndexManifest?.sha256 !== latest.indexes.v5.manifest.sha256
+    || metadata.v5Publication?.sha256 !== latest.indexes.v5.publication.sha256
+    || v5.status !== "COMPLETE" || publication.status !== "COMPLETE") {
+    throw new Error("GFS_144H_ARTIFACT_V5_MISMATCH");
+  }
+  return { metadata, latest, manifest, index, v5, publication };
 }
