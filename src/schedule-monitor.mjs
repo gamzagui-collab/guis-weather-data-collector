@@ -68,7 +68,8 @@ export function evaluateScheduleMonitor({
   const completed = normalizedRuns(collectorRuns);
   const scheduled = completed.filter((run) => run.event === "schedule");
   const manual = completed.filter((run) => run.event === "workflow_dispatch");
-  const lastScheduled = runSummary(scheduled[0], collectorSchedule);
+  const scheduledSummaries = scheduled.map((run) => runSummary(run, collectorSchedule));
+  const lastScheduled = scheduledSummaries[0] || null;
   const lastScheduledSuccess = runSummary(scheduled.find((run) => run.conclusion === "success"), collectorSchedule);
   const lastManual = manual[0] ? {
     id: String(manual[0].id), conclusion: manual[0].conclusion,
@@ -77,9 +78,10 @@ export function evaluateScheduleMonitor({
   } : null;
   const firstScheduledSuccessIndex = scheduled.findIndex((run) => run.conclusion === "success");
   const consecutiveScheduledFailures = firstScheduledSuccessIndex < 0 ? scheduled.length : firstScheduledSuccessIndex;
-  const expectedCollectorSlot = expectedScheduleSlot(nowIso, collectorSchedule);
+  const collectorDueCutoff = new Date(nowMs - missingMs).toISOString();
+  const expectedCollectorSlot = expectedScheduleSlot(collectorDueCutoff, collectorSchedule);
   const expectedCollectorAgeMs = Math.max(0, nowMs - Date.parse(expectedCollectorSlot));
-  const collectorSlotObserved = lastScheduled?.scheduledFor === expectedCollectorSlot;
+  const collectorSlotObserved = scheduledSummaries.some((run) => run.scheduledFor === expectedCollectorSlot);
   const collectorScheduleExpected = activeSinceMs === null || Date.parse(expectedCollectorSlot) >= activeSinceMs;
   const collectorScheduleMissing = collectorScheduleExpected && !collectorSlotObserved && expectedCollectorAgeMs > missingMs;
 
@@ -91,10 +93,12 @@ export function evaluateScheduleMonitor({
     ? [currentScheduledMonitor, ...monitorRuns.filter((run) => String(run?.id) !== String(currentScheduledMonitor.id))]
     : monitorRuns;
   const completedMonitors = normalizedRuns(monitorEvidence).filter((run) => run.event === "schedule");
-  const lastMonitorScheduled = runSummary(completedMonitors[0], monitorSchedule);
-  const expectedMonitorSlot = expectedScheduleSlot(nowIso, monitorSchedule);
+  const monitorSummaries = completedMonitors.map((run) => runSummary(run, monitorSchedule));
+  const lastMonitorScheduled = monitorSummaries[0] || null;
+  const monitorDueCutoff = new Date(nowMs - missingMs).toISOString();
+  const expectedMonitorSlot = expectedScheduleSlot(monitorDueCutoff, monitorSchedule);
   const expectedMonitorAgeMs = Math.max(0, nowMs - Date.parse(expectedMonitorSlot));
-  const monitorSlotObserved = lastMonitorScheduled?.scheduledFor === expectedMonitorSlot;
+  const monitorSlotObserved = monitorSummaries.some((run) => run.scheduledFor === expectedMonitorSlot);
   const monitorScheduleExpected = activeSinceMs === null || Date.parse(expectedMonitorSlot) >= activeSinceMs;
   const monitorScheduleMissing = monitorScheduleExpected && !monitorSlotObserved && expectedMonitorAgeMs > missingMs;
 

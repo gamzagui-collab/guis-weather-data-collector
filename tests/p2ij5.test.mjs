@@ -148,6 +148,29 @@ test("configured 144H monitor does not let manual success hide a missed schedule
   assert.ok(result.reasons.includes("COLLECTOR_SCHEDULE_EXECUTION_MISSING"));
 });
 
+test("144H monitor retains the previous overdue slot when a newer slot is observed", () => {
+  const currentMonitorRun = {
+    id: 4, event: "schedule", status: "in_progress", conclusion: null,
+    created_at: "2026-10-27T23:20:00Z"
+  };
+  const result = evaluateScheduleMonitor({
+    now: "2026-10-27T23:20:00Z",
+    activeSince: "2026-10-25T06:45:00Z",
+    collectorSchedule: { hours: [7, 19], minute: 17 },
+    monitorSchedule: { hours: [11, 23], minute: 17 },
+    missingMs: 5 * 60 * 60 * 1000,
+    collectorRuns: [
+      { id: 3, event: "schedule", status: "completed", conclusion: "success", created_at: "2026-10-27T19:20:00Z" },
+      { id: 1, event: "schedule", status: "completed", conclusion: "success", created_at: "2026-10-26T19:20:00Z" }
+    ],
+    monitorRuns: [currentMonitorRun],
+    currentMonitorRun
+  });
+  assert.equal(result.expectedCollectorSlot, "2026-10-27T07:17:00.000Z");
+  assert.equal(result.collectorSlotObserved, false);
+  assert.ok(result.reasons.includes("COLLECTOR_SCHEDULE_EXECUTION_MISSING"));
+});
+
 test("144H monitor does not invent a missed slot before Canary activation", () => {
   const result = evaluateScheduleMonitor({
     now: "2026-10-25T05:13:00Z",

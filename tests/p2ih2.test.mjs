@@ -193,14 +193,26 @@ test("manual success cannot hide a missing scheduled collector execution", () =>
 test("first scheduled run preserves its 135 minute delay regression evidence", () => {
   const result = evaluateScheduleMonitor({
     now: new Date("2026-10-23T02:20:00Z"),
-    collectorRuns: [{
-      id: 39886451212, event: "schedule", status: "completed", conclusion: "success",
-      created_at: "2026-10-23T01:52:34Z", updated_at: "2026-10-23T01:54:05Z"
-    }],
-    monitorRuns: [{
-      id: 2, event: "schedule", status: "completed", conclusion: "success",
-      created_at: "2026-10-23T02:18:00Z", updated_at: "2026-10-23T02:19:00Z"
-    }]
+    collectorRuns: [
+      {
+        id: 39886451212, event: "schedule", status: "completed", conclusion: "success",
+        created_at: "2026-10-23T01:52:34Z", updated_at: "2026-10-23T01:54:05Z"
+      },
+      {
+        id: 39880000000, event: "schedule", status: "completed", conclusion: "success",
+        created_at: "2026-10-22T17:40:00Z", updated_at: "2026-10-22T17:41:00Z"
+      }
+    ],
+    monitorRuns: [
+      {
+        id: 2, event: "schedule", status: "completed", conclusion: "success",
+        created_at: "2026-10-23T02:18:00Z", updated_at: "2026-10-23T02:19:00Z"
+      },
+      {
+        id: 1, event: "schedule", status: "completed", conclusion: "success",
+        created_at: "2026-10-22T20:20:00Z", updated_at: "2026-10-22T20:21:00Z"
+      }
+    ]
   });
   assert.equal(result.lastScheduled.scheduledFor, "2026-10-22T23:37:00.000Z");
   assert.equal(result.lastScheduled.startDelayMs, 8_134_000);
@@ -226,12 +238,57 @@ test("scheduled failures are counted independently from later manual success", (
 test("monitor schedule absence is tracked separately from collector success", () => {
   const result = evaluateScheduleMonitor({
     now: new Date("2026-10-23T06:30:00Z"),
-    collectorRuns: [{ id: 1, event: "schedule", status: "completed", conclusion: "success", created_at: "2026-10-23T05:40:00Z" }],
+    collectorRuns: [
+      { id: 2, event: "schedule", status: "completed", conclusion: "success", created_at: "2026-10-23T05:40:00Z" },
+      { id: 1, event: "schedule", status: "completed", conclusion: "success", created_at: "2026-10-22T23:40:00Z" }
+    ],
     monitorRuns: []
   });
   assert.equal(result.collectorSlotObserved, true);
   assert.equal(result.monitorSlotObserved, false);
   assert.ok(result.reasons.includes("MONITOR_SCHEDULE_EXECUTION_MISSING"));
+});
+
+test("an overdue missed collector slot remains visible after the next slot runs", () => {
+  const currentMonitorRun = {
+    id: 20, event: "schedule", status: "in_progress", conclusion: null,
+    created_at: "2026-10-26T14:20:00Z"
+  };
+  const result = evaluateScheduleMonitor({
+    now: "2026-10-26T14:20:00Z",
+    collectorRuns: [
+      { id: 3, event: "schedule", status: "completed", conclusion: "success", created_at: "2026-10-26T11:40:00Z" },
+      { id: 1, event: "schedule", status: "completed", conclusion: "success", created_at: "2026-10-25T23:40:00Z" }
+    ],
+    monitorRuns: [currentMonitorRun],
+    currentMonitorRun
+  });
+  assert.equal(result.expectedCollectorSlot, "2026-10-26T05:37:00.000Z");
+  assert.equal(result.collectorSlotObserved, false);
+  assert.equal(result.status, "FAILED");
+  assert.ok(result.reasons.includes("COLLECTOR_SCHEDULE_EXECUTION_MISSING"));
+});
+
+test("a collector slot still inside its grace period is not reported missing", () => {
+  const currentMonitorRun = {
+    id: 20, event: "schedule", status: "in_progress", conclusion: null,
+    created_at: "2026-10-26T08:20:00Z"
+  };
+  const result = evaluateScheduleMonitor({
+    now: "2026-10-26T08:20:00Z",
+    collectorRuns: [
+      { id: 2, event: "schedule", status: "completed", conclusion: "success", created_at: "2026-10-26T05:40:00Z" },
+      { id: 1, event: "schedule", status: "completed", conclusion: "success", created_at: "2026-10-25T23:40:00Z" }
+    ],
+    monitorRuns: [
+      currentMonitorRun,
+      { id: 19, event: "schedule", status: "completed", conclusion: "success", created_at: "2026-10-26T02:20:00Z" }
+    ],
+    currentMonitorRun
+  });
+  assert.equal(result.expectedCollectorSlot, "2026-10-25T23:37:00.000Z");
+  assert.equal(result.collectorSlotObserved, true);
+  assert.ok(!result.reasons.includes("COLLECTOR_SCHEDULE_EXECUTION_MISSING"));
 });
 
 test("manual publish can recover a verified artifact from a failed combined publish run", async () => {
