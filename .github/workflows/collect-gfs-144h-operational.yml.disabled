@@ -49,6 +49,7 @@ jobs:
           GFS_144H_CANARY_EXPIRES_AT: ${{ steps.inspect.outputs.canary_expires_at }}
           GFS_144H_CANARY_ACTIVE: "false"
           GFS_144H_PUBLIC_READY: ${{ steps.inspect.outputs.public_ready }}
+          GFS_144H_OPERATIONAL_ACTIVE_SINCE: ${{ vars.GFS_144H_OPERATIONAL_ACTIVE_SINCE }}
         run: node scripts/assert-operational-gate.mjs
   collect-and-publish:
     needs: activation-gate

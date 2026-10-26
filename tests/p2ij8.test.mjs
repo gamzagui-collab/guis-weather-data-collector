@@ -10,7 +10,8 @@ import { GFS_144H_FORECAST_HOURS } from "../src/horizon-144.mjs";
 import { validateIndexV5Publication } from "../src/indexes-v5.mjs";
 import { LocalObjectStore } from "../src/object-store.mjs";
 import { LATEST_144H_KEY, publishDataset144, readLatestOperationalPublication144 } from "../src/publisher-144.mjs";
-import { evaluateOperationalGate } from "../src/operational-gate.mjs";
+import { evaluateOperationalGate, requireOperationalActiveSince } from "../src/operational-gate.mjs";
+import { evaluateScheduleMonitor } from "../src/schedule-monitor.mjs";
 import { buildOperationalRetentionDryRun } from "../src/operational-retention.mjs";
 
 function response(status, body = Buffer.alloc(0)) {
@@ -125,12 +126,56 @@ test("source and v5 partial publication cannot move latest and is recoverable id
 test("operational schedule gate requires paid confirmation, approval, expired Canary and source-v5 baseline", () => {
   const blocked = evaluateOperationalGate({ paidConfirmed: false, cutoverApproved: true,
     canaryExpiresAt: "2026-10-27T06:45:00.000Z", canaryActive: true, currentPublicReady: true,
+    operationalActiveSince: null,
     now: new Date("2026-10-26T00:00:00.000Z") });
-  assert.deepEqual(blocked.reasons, ["WORKERS_PAID_NOT_CONFIRMED", "CANARY_STILL_ACTIVE"]);
+  assert.deepEqual(blocked.reasons, ["WORKERS_PAID_NOT_CONFIRMED", "CANARY_STILL_ACTIVE",
+    "GFS_144H_OPERATIONAL_ACTIVE_SINCE_MISSING"]);
   const ready = evaluateOperationalGate({ paidConfirmed: true, cutoverApproved: true,
     canaryExpiresAt: "2026-10-27T06:45:00.000Z", canaryActive: false, currentPublicReady: true,
+    operationalActiveSince: "2026-10-27T07:00:00.000Z",
     now: new Date("2026-10-28T00:00:00.000Z") });
   assert.equal(ready.status, "READY");
+  assert.equal(ready.operationalActiveSince, "2026-10-27T07:00:00.000Z");
+});
+
+test("operational activation time is required, UTC, after Canary, and not in the future", () => {
+  const options = { now: new Date("2026-10-27T07:10:00.000Z"), canaryExpiresAt: "2026-10-27T06:45:00.000Z" };
+  assert.throws(() => requireOperationalActiveSince({ ...options, value: null }),
+    /GFS_144H_OPERATIONAL_ACTIVE_SINCE_MISSING/);
+  assert.throws(() => requireOperationalActiveSince({ ...options, value: "not-a-time" }),
+    /GFS_144H_OPERATIONAL_ACTIVE_SINCE_INVALID/);
+  assert.throws(() => requireOperationalActiveSince({ ...options, value: "2026-10-27T16:00:00+09:00" }),
+    /GFS_144H_OPERATIONAL_ACTIVE_SINCE_INVALID/);
+  assert.throws(() => requireOperationalActiveSince({ ...options, value: "2026-10-27T06:45:00.000Z" }),
+    /GFS_144H_OPERATIONAL_ACTIVE_SINCE_NOT_AFTER_CANARY/);
+  assert.throws(() => requireOperationalActiveSince({ ...options, value: "2026-10-27T07:11:00.000Z" }),
+    /GFS_144H_OPERATIONAL_ACTIVE_SINCE_FUTURE/);
+});
+
+test("first operational monitor ignores pre-activation slots but detects the first overdue active slot", () => {
+  const schedule = {
+    collectorSchedule: { hours: [7, 19], minute: 17 },
+    monitorSchedule: { hours: [11, 23], minute: 17 },
+    missingMs: 6 * 60 * 60 * 1000,
+    activeSince: "2026-10-27T07:00:00.000Z"
+  };
+  const firstMonitor = {
+    id: 1, event: "schedule", status: "in_progress", conclusion: null,
+    created_at: "2026-10-27T11:20:00.000Z"
+  };
+  const first = evaluateScheduleMonitor({ ...schedule, now: "2026-10-27T11:20:00.000Z",
+    collectorRuns: [{ id: 2, event: "schedule", status: "completed", conclusion: "success",
+      created_at: "2026-10-27T07:20:00.000Z" }],
+    monitorRuns: [firstMonitor], currentMonitorRun: firstMonitor });
+  assert.equal(first.collectorScheduleExpected, false);
+  assert.equal(first.monitorScheduleExpected, false);
+  assert.ok(!first.reasons.some((reason) => reason.endsWith("_MISSING")));
+
+  const overdue = evaluateScheduleMonitor({ ...schedule, now: "2026-10-27T14:00:00.000Z",
+    collectorRuns: [], monitorRuns: [firstMonitor] });
+  assert.equal(overdue.expectedCollectorSlot, "2026-10-27T07:17:00.000Z");
+  assert.equal(overdue.collectorScheduleExpected, true);
+  assert.ok(overdue.reasons.includes("COLLECTOR_SCHEDULE_EXECUTION_MISSING"));
 });
 
 test("operational retention is dry-run only, protects active v5 and uses two 144H runs per day", () => {
@@ -171,7 +216,11 @@ test("Paid operational workflows remain disabled, bounded and source-v5 aware", 
   assert.match(operational, /17 7,19 \* \* \*/);
   assert.match(operational, /WORKERS_PAID_CONFIRMED/);
   assert.match(operational, /CANARY_EXPIRES_AT/);
+  assert.match(operational, /GFS_144H_OPERATIONAL_ACTIVE_SINCE: \$\{\{ vars\.GFS_144H_OPERATIONAL_ACTIVE_SINCE \}\}/);
   assert.match(monitor, /V5_PUBLIC_READINESS_NOT_COMPLETE/);
+  assert.match(monitor, /requireOperationalActiveSince/);
+  assert.match(monitor, /activeSince/);
+  assert.match(monitor, /GFS_144H_OPERATIONAL_ACTIVE_SINCE: \$\{\{ vars\.GFS_144H_OPERATIONAL_ACTIVE_SINCE \}\}/);
   assert.match(publisher, /SOURCE_AND_V5_READY_TO_PUBLISH/);
   assert.match(publisher, /publicReadiness/);
   assert.match(remotePublisher, /v5_index_manifest_sha256=/);

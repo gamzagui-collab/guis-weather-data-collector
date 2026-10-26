@@ -43,11 +43,20 @@ jobs:
           R2_TOTAL_BYTES: ${{ steps.inspect.outputs.r2_total_bytes }}
           R2_PUBLIC_READY: ${{ steps.inspect.outputs.public_ready }}
           R2_V5_SHA256: ${{ steps.inspect.outputs.v5_index_manifest_sha256 }}
+          GFS_144H_CANARY_EXPIRES_AT: ${{ steps.inspect.outputs.canary_expires_at }}
+          GFS_144H_OPERATIONAL_ACTIVE_SINCE: ${{ vars.GFS_144H_OPERATIONAL_ACTIVE_SINCE }}
         with:
           script: |
             const { pathToFileURL } = await import("node:url");
             const { evaluateScheduleMonitor } = await import(pathToFileURL(`${process.env.GITHUB_WORKSPACE}/src/schedule-monitor.mjs`).href);
+            const { requireOperationalActiveSince } = await import(pathToFileURL(`${process.env.GITHUB_WORKSPACE}/src/operational-gate.mjs`).href);
             const { owner, repo } = context.repo;
+            const now = new Date();
+            const activeSince = requireOperationalActiveSince({
+              value: process.env.GFS_144H_OPERATIONAL_ACTIVE_SINCE,
+              now,
+              canaryExpiresAt: process.env.GFS_144H_CANARY_EXPIRES_AT
+            });
             const [collector, monitor] = await Promise.all([
               github.rest.actions.listWorkflowRuns({ owner, repo, workflow_id: "collect-gfs-144h-operational.yml", per_page: 30 }),
               github.rest.actions.listWorkflowRuns({ owner, repo, workflow_id: "monitor-gfs-144h-operational.yml", per_page: 20 })
@@ -57,10 +66,11 @@ jobs:
               collectorRuns: collector.data.workflow_runs,
               monitorRuns: monitor.data.workflow_runs,
               currentMonitorRun,
-              now: new Date(),
+              now,
               collectorSchedule: { hours: [7, 19], minute: 17 },
               monitorSchedule: { hours: [11, 23], minute: 17 },
-              missingMs: 6 * 60 * 60 * 1000
+              missingMs: 6 * 60 * 60 * 1000,
+              activeSince
             });
             const modelRunMs = Date.parse(process.env.R2_MODEL_RUN_AT || "");
             const ageHours = Number.isFinite(modelRunMs) ? (Date.now() - modelRunMs) / 3600000 : Infinity;
@@ -69,6 +79,7 @@ jobs:
             const lastPublishedRun = scheduledRuns.find((run) => run.status === "completed" && run.conclusion === "success") || null;
             await core.summary.addHeading("GFS 144H operational monitor")
               .addRaw(`Scheduled status: ${result.status}\n`)
+              .addRaw(`Operational active since: ${activeSince}\n`)
               .addRaw(`Last scheduled run: ${result.lastScheduled?.id || "none"}\n`)
               .addRaw(`Last manual run: ${result.lastManual?.id || "none"}\n`)
               .addRaw(`Last scheduled success: ${result.lastScheduledSuccess?.id || "none"}\n`)

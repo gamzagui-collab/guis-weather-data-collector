@@ -6,6 +6,7 @@ const result = evaluateOperationalGate({
   canaryExpiresAt: process.env.GFS_144H_CANARY_EXPIRES_AT,
   canaryActive: process.env.GFS_144H_CANARY_ACTIVE === "true",
   currentPublicReady: process.env.GFS_144H_PUBLIC_READY === "true",
+  operationalActiveSince: process.env.GFS_144H_OPERATIONAL_ACTIVE_SINCE,
   now: new Date()
 });
 process.stdout.write(`${JSON.stringify(result)}\n`);
