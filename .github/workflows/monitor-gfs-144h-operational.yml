@@ -1,6 +1,7 @@
 name: Monitor GFS 144H Operational Freshness
 
-# P2-I-J-8 activation gate: this remains inert while its filename ends in .disabled.
+# P2-I-J-9 operational monitor. The fixed repository activation timestamp is
+# mandatory so the first run cannot report slots from before activation.
 on:
   workflow_dispatch:
   schedule:

@@ -202,11 +202,11 @@ test("operational retention is dry-run only, protects active v5 and uses two 144
   assert.equal(plan.deleteCandidates.some((item) => item.runId === "20261025T180000Z"), false);
 });
 
-test("Paid operational workflows remain disabled, bounded and source-v5 aware", async () => {
+test("Paid operational workflows are active, bounded and source-v5 aware", async () => {
   const [manual, operational, monitor, publisher, remotePublisher] = await Promise.all([
     readFile(new URL("../.github/workflows/collect-gfs-144h-manual.yml", import.meta.url), "utf8"),
-    readFile(new URL("../.github/workflows/collect-gfs-144h-operational.yml.disabled", import.meta.url), "utf8"),
-    readFile(new URL("../.github/workflows/monitor-gfs-144h-operational.yml.disabled", import.meta.url), "utf8"),
+    readFile(new URL("../.github/workflows/collect-gfs-144h-operational.yml", import.meta.url), "utf8"),
+    readFile(new URL("../.github/workflows/monitor-gfs-144h-operational.yml", import.meta.url), "utf8"),
     readFile(new URL("../src/publisher-144.mjs", import.meta.url), "utf8"),
     readFile(new URL("../scripts/publish-r2-144h.mjs", import.meta.url), "utf8")
   ]);
@@ -229,7 +229,7 @@ test("Paid operational workflows remain disabled, bounded and source-v5 aware", 
 test("operational caller cannot deadlock the reusable NOAA collector concurrency lock", async () => {
   const [manual, operational] = await Promise.all([
     readFile(new URL("../.github/workflows/collect-gfs-144h-manual.yml", import.meta.url), "utf8"),
-    readFile(new URL("../.github/workflows/collect-gfs-144h-operational.yml.disabled", import.meta.url), "utf8")
+    readFile(new URL("../.github/workflows/collect-gfs-144h-operational.yml", import.meta.url), "utf8")
   ]);
   assert.match(manual, /group: guis-weather-gfs-noaa-collection/);
   assert.match(operational, /group: guis-weather-gfs-144h-operational-orchestrator/);

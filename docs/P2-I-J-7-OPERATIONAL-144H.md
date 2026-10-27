@@ -1,7 +1,9 @@
 # P2-I-J-7 operational 144H cutover
 
-The permanent 144-hour collector and monitor are intentionally stored as
-`*.yml.disabled`. GitHub does not schedule them in this state.
+The permanent 144-hour collector and monitor were activated after the Canary
+closed. They now exist as normal `*.yml` workflows, but both still fail closed
+unless the fixed repository activation timestamp and every operational gate
+remain valid.
 
 Activation gates:
 
@@ -11,8 +13,8 @@ Activation gates:
 4. The Preview Worker plan and measured CPU satisfy the account limit.
 5. Preview public/mobile regressions and rollback tests pass.
 
-Only after all gates pass may the files be renamed to `.yml`. Immediately
-before that activation commit, record the actual UTC activation instant once
+The files may be activated only after all gates pass. Immediately before the
+activation commit, record the actual UTC activation instant once
 as the non-secret GitHub Actions repository variable
 `GFS_144H_OPERATIONAL_ACTIVE_SINCE`. Do not pre-create it, reuse the Canary
 start/expiry time, or update it on each monitor run. Both the collector gate

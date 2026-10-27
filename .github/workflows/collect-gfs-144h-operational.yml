@@ -1,7 +1,8 @@
 name: NOAA GFS Collect and Publish 144H Operational
 
-# P2-I-J-8 activation gate: keep this file disabled until Workers Paid is
-# confirmed, Canary is closed, and one manual source+v5 publication passes.
+# P2-I-J-9 operational schedule. The activation gate still fails closed unless
+# Paid approval, Canary expiry, source+v5 readiness, and the fixed activation
+# timestamp are all present.
 on:
   workflow_dispatch:
   schedule:

@@ -4,10 +4,10 @@ import { readFile } from "node:fs/promises";
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 
-test("permanent 144H workflows are complete but inert until every cutover gate passes", async () => {
+test("permanent 144H workflows are active and keep every cutover gate", async () => {
   const [collector, monitor, manual] = await Promise.all([
-    read(".github/workflows/collect-gfs-144h-operational.yml.disabled"),
-    read(".github/workflows/monitor-gfs-144h-operational.yml.disabled"),
+    read(".github/workflows/collect-gfs-144h-operational.yml"),
+    read(".github/workflows/monitor-gfs-144h-operational.yml"),
     read(".github/workflows/collect-gfs-144h-manual.yml")
   ]);
   assert.match(collector, /17 7,19 \* \* \*/);
