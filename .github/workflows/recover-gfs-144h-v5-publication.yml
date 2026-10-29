@@ -1,0 +1,64 @@
+name: Recover GFS 144H v5 Publication Link
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Exact current 144H runId with verified immutable Source and v5 objects"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: guis-weather-gfs-r2-publisher
+  cancel-in-progress: false
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID_V3 }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY_V3 }}
+      R2_BUCKET: guis-weather-gfs-preview
+      FIXED_RUN_ID: ${{ inputs.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pinned R2 client
+        run: python -m pip install --disable-pip-version-check boto3==1.40.58
+      - name: Verify direct recovery contracts
+        run: node --test tests/p2ij9-v5-recovery.test.mjs
+      - id: snapshot
+        name: Snapshot and verify fixed Source plus existing v5 objects
+        run: >-
+          python python/snapshot_v5_recovery.py --run-id "$FIXED_RUN_ID"
+          --store recovery-store --inventory recovery-inventory.json
+      - name: Build publication spec and latest overlay locally
+        run: >-
+          node scripts/prepare-v5-publication-recovery.mjs --run-id "$FIXED_RUN_ID"
+          --latest-sha256 "${{ steps.snapshot.outputs.latest_sha256 }}"
+          --store recovery-store --inventory recovery-inventory.json --plan recovery-plan.json
+      - name: Publish missing spec and swap latest last
+        run: >-
+          python python/publish_v5_recovery.py --execute
+          --store recovery-store --plan recovery-plan.json
+      - name: Verify operational Source plus v5 publication
+        run: node scripts/inspect-r2-publication-144h.mjs --execute
+      - name: Verify activation gate without NOAA collection
+        env:
+          WORKERS_PAID_CONFIRMED: ${{ vars.WORKERS_PAID_CONFIRMED }}
+          GFS_144H_OPERATIONAL_APPROVED: ${{ vars.GFS_144H_OPERATIONAL_APPROVED }}
+          GFS_144H_CANARY_EXPIRES_AT: "2026-10-27T06:45:00Z"
+          GFS_144H_CANARY_ACTIVE: "false"
+          GFS_144H_PUBLIC_READY: "true"
+          GFS_144H_OPERATIONAL_ACTIVE_SINCE: ${{ vars.GFS_144H_OPERATIONAL_ACTIVE_SINCE }}
+        run: node scripts/assert-operational-gate.mjs
