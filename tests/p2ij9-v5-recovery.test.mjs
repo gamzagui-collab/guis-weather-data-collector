@@ -148,6 +148,9 @@ test("remote recovery is fixed-run, NOAA-free, deletion-free, shared-lock and la
   ]);
   assert.match(workflow, /group: guis-weather-gfs-r2-publisher/);
   assert.match(workflow, /FIXED_RUN_ID/);
+  assert.match(workflow, /GFS_144H_CANARY_EXPIRES_AT: \$\{\{ steps\.inspect\.outputs\.canary_expires_at \}\}/);
+  assert.match(workflow, /GFS_144H_PUBLIC_READY: \$\{\{ steps\.inspect\.outputs\.public_ready \}\}/);
+  assert.doesNotMatch(workflow, /GFS_144H_PUBLIC_READY: ["']?true["']?/);
   assert.doesNotMatch(workflow, /schedule:|nomads|collect-and-publish/i);
   assert.doesNotMatch(`${workflow}\n${publisher}`, /delete_object|delete-object|Lifecycle/);
   assert.ok(publisher.indexOf("put_object(Bucket=BUCKET, Key=publication")

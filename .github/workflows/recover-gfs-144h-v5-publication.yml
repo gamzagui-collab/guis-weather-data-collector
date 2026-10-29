@@ -51,14 +51,15 @@ jobs:
         run: >-
           python python/publish_v5_recovery.py --execute
           --store recovery-store --plan recovery-plan.json
-      - name: Verify operational Source plus v5 publication
+      - id: inspect
+        name: Verify operational Source plus v5 publication
         run: node scripts/inspect-r2-publication-144h.mjs --execute
       - name: Verify activation gate without NOAA collection
         env:
           WORKERS_PAID_CONFIRMED: ${{ vars.WORKERS_PAID_CONFIRMED }}
           GFS_144H_OPERATIONAL_APPROVED: ${{ vars.GFS_144H_OPERATIONAL_APPROVED }}
-          GFS_144H_CANARY_EXPIRES_AT: "2026-10-27T06:45:00Z"
+          GFS_144H_CANARY_EXPIRES_AT: ${{ steps.inspect.outputs.canary_expires_at }}
           GFS_144H_CANARY_ACTIVE: "false"
-          GFS_144H_PUBLIC_READY: "true"
+          GFS_144H_PUBLIC_READY: ${{ steps.inspect.outputs.public_ready }}
           GFS_144H_OPERATIONAL_ACTIVE_SINCE: ${{ vars.GFS_144H_OPERATIONAL_ACTIVE_SINCE }}
         run: node scripts/assert-operational-gate.mjs
