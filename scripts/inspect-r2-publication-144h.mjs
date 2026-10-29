@@ -10,6 +10,8 @@ import { LATEST_144H_KEY } from "../src/publisher-144.mjs";
 import { r2Args, runAws, verifiedR2Environment } from "../src/r2-cli.mjs";
 import { evaluateStorageProtection, GFS_ESTIMATED_144H_INDEXED_RUN_BYTES } from "../src/storage-policy.mjs";
 
+const HEAD_BATCH_SIZE = 16;
+
 if (!process.argv.includes("--execute")) throw new Error("R2_144H_REMOTE_EXECUTION_FLAG_REQUIRED");
 verifiedR2Environment();
 const temporary = await mkdtemp(join(tmpdir(), "gfs-r2-144h-inspect-"));
@@ -34,6 +36,15 @@ async function remoteHeadMatches(descriptor) {
     if (String(value.Metadata?.[key]) !== String(expected)) return false;
   }
   return true;
+}
+
+async function remoteHeadsMatch(descriptors) {
+  const matches = [];
+  for (let offset = 0; offset < descriptors.length; offset += HEAD_BATCH_SIZE) {
+    const batch = descriptors.slice(offset, offset + HEAD_BATCH_SIZE);
+    matches.push(...await Promise.all(batch.map(remoteHeadMatches)));
+  }
+  return matches;
 }
 
 async function inventory() {
@@ -123,7 +134,7 @@ try {
       });
       descriptors.push(...publicationObject.value.objects, latest.indexes.v5.publication);
     }
-    const matches = await Promise.all(descriptors.map(remoteHeadMatches));
+    const matches = await remoteHeadsMatch(descriptors);
     if (matches.some((value) => !value)) throw new Error("R2_144H_PUBLISHED_OBJECT_INTEGRITY_FAILED");
     publishedComplete = publicReady;
   }

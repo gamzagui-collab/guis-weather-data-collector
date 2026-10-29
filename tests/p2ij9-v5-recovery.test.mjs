@@ -141,10 +141,11 @@ test("recovery blocks a latest race before the pointer swap", async () => {
   } finally { await rm(state.root, { recursive: true, force: true }); }
 });
 
-test("remote recovery is fixed-run, NOAA-free, deletion-free, shared-lock and latest-last", async () => {
-  const [workflow, publisher] = await Promise.all([
+test("remote recovery is fixed-run, bounded, NOAA-free, deletion-free, shared-lock and latest-last", async () => {
+  const [workflow, publisher, inspector] = await Promise.all([
     readFile(new URL("../.github/workflows/recover-gfs-144h-v5-publication.yml", import.meta.url), "utf8"),
-    readFile(new URL("../python/publish_v5_recovery.py", import.meta.url), "utf8")
+    readFile(new URL("../python/publish_v5_recovery.py", import.meta.url), "utf8"),
+    readFile(new URL("../scripts/inspect-r2-publication-144h.mjs", import.meta.url), "utf8")
   ]);
   assert.match(workflow, /group: guis-weather-gfs-r2-publisher/);
   assert.match(workflow, /FIXED_RUN_ID/);
@@ -157,4 +158,6 @@ test("remote recovery is fixed-run, NOAA-free, deletion-free, shared-lock and la
     < publisher.indexOf("put_object(Bucket=BUCKET, Key=latest"));
   assert.match(publisher, /LATEST_REGRESSION_BLOCKED/);
   assert.match(publisher, /LATEST_RACE/);
+  assert.match(inspector, /const HEAD_BATCH_SIZE = 16/);
+  assert.doesNotMatch(inspector, /Promise\.all\(descriptors\.map\(remoteHeadMatches\)\)/);
 });
