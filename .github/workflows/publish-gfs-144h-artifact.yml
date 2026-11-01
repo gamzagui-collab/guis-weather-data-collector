@@ -1,0 +1,83 @@
+name: Publish Verified GFS 144H Artifact
+
+on:
+  workflow_dispatch:
+    inputs:
+      collect_run_id:
+        description: "Trusted operational 144H workflow run containing a successful collect job"
+        required: true
+        type: string
+      artifact_id:
+        description: "Exact unexpired gfs-144h Artifact ID from that run"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    concurrency:
+      group: guis-weather-gfs-r2-publisher
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Verify cancelled-run collect success and exact Artifact identity
+        id: source
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GFS_SOURCE_RUN_ID: ${{ inputs.collect_run_id }}
+          GFS_SOURCE_ARTIFACT_ID: ${{ inputs.artifact_id }}
+        run: node scripts/verify-publish-source-144h.mjs
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pinned R2 client
+        run: python -m pip install --disable-pip-version-check awscli==1.42.58
+      - name: Download exact verified 144-hour Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ steps.source.outputs.artifact_name }}
+          path: artifact-package-144h
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.source.outputs.source_run_id }}
+      - name: Reverify Artifact provenance and hashes without NOAA access
+        env:
+          GFS_ARTIFACT_ROOT: artifact-package-144h
+          GFS_EXPECTED_REPOSITORY: ${{ github.repository }}
+          GFS_EXPECTED_REF: main
+          GFS_EXPECTED_SHA: ${{ steps.source.outputs.source_head_sha }}
+          GFS_EXPECTED_RUN_ID: ${{ steps.source.outputs.source_run_id }}
+        run: node scripts/verify-artifact-144h.mjs
+      - name: Publish immutable objects and switch namespaced latest last
+        id: publish
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID_V3 }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY_V3 }}
+          R2_BUCKET: guis-weather-gfs-preview
+        run: node scripts/publish-r2-144h.mjs --execute --verified-local-store artifact-package-144h/payload
+      - name: Inspect completed Source plus v5 publication
+        id: inspect
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID_V3 }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY_V3 }}
+          R2_BUCKET: guis-weather-gfs-preview
+        run: node scripts/inspect-r2-publication-144h.mjs --execute
+      - name: Verify structural activation gate without collection
+        env:
+          WORKERS_PAID_CONFIRMED: ${{ vars.WORKERS_PAID_CONFIRMED }}
+          GFS_144H_OPERATIONAL_APPROVED: ${{ vars.GFS_144H_OPERATIONAL_APPROVED }}
+          GFS_144H_CANARY_EXPIRES_AT: ${{ steps.inspect.outputs.canary_expires_at }}
+          GFS_144H_CANARY_ACTIVE: "false"
+          GFS_144H_PUBLIC_READY: ${{ steps.inspect.outputs.public_ready }}
+          GFS_144H_OPERATIONAL_ACTIVE_SINCE: ${{ vars.GFS_144H_OPERATIONAL_ACTIVE_SINCE }}
+        run: node scripts/assert-operational-gate.mjs
